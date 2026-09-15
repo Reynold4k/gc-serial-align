@@ -25,6 +25,75 @@ CAVEATS = [
 ]
 
 
+def if_coverage(cfg: Config) -> dict:
+    """How much of the transcriptomics tissue does each IF section actually reach?
+
+    A germinal centre can only be matched where the IF section covers it. When a
+    section is torn, folded, or was scanned over a smaller field than the chip,
+    the GCs in that region have no IF counterpart, and no amount of threshold
+    tuning brings them back. This makes that visible instead of leaving it to be
+    discovered from a puzzling 3D picture.
+    """
+    import json as _json
+
+    from scipy import ndimage as ndi
+
+    labels = np.load(cfg.output_dir / "03_gc_match/plane_gc_labels.npz")
+    x0, y0, height, width = (float(v) for v in labels["grid"])
+    height, width = int(height), int(width)
+    grid_um = cfg.grid_um
+
+    scaffold = np.load(cfg.output_dir / "00_scaffold/st_scaffold.npz")
+    world, slice_label = scaffold["world_um"], scaffold["slice_short"]
+    st = np.zeros((height, width), bool)
+    for name in cfg.st_names:
+        w = world[slice_label == name]
+        col = np.rint((w[:, 0] - x0) / grid_um).astype(int)
+        row = np.rint((w[:, 1] - y0) / grid_um).astype(int)
+        keep = (row >= 0) & (row < height) & (col >= 0) & (col < width)
+        st[row[keep], col[keep]] = True
+    st = ndi.binary_closing(st, np.ones((3, 3)))
+
+    transforms = _json.loads(
+        (cfg.output_dir / "02_global_align/global_transforms.json").read_text())["sections"]
+    rows, cols = np.indices((height, width))
+    wx = x0 + cols * grid_um
+    wy = y0 + rows * grid_um
+
+    per_section, stack = {}, np.zeros((height, width), np.uint8)
+    for entry in cfg.if_sections:
+        key = f"IF{entry.index}"
+        data = np.load(cfg.output_dir / f"01_if_gc/{key}_gc.npz")
+        tissue = data["tissue"]
+        info = transforms[key]
+        inverse = np.linalg.inv(np.array(info["linear"]))
+        offset = np.array(info["offset"])
+        local = np.stack([wx - offset[0], wy - offset[1]], axis=-1) @ inverse.T
+        src_r = np.rint(local[..., 1] / grid_um).astype(int)
+        src_c = np.rint(local[..., 0] / grid_um).astype(int)
+        inside = ((src_r >= 0) & (src_r < tissue.shape[0])
+                  & (src_c >= 0) & (src_c < tissue.shape[1]))
+        covered = np.zeros((height, width), bool)
+        covered[inside] = tissue[src_r[inside], src_c[inside]]
+        stack += covered
+        missed = st & ~covered
+        per_section[key] = {
+            "covers_st_tissue_pct": round(float((st & covered).sum() / st.sum() * 100), 1),
+            "missed_mm2": round(float(missed.sum() * grid_um ** 2 / 1e6), 2),
+            "missed_outside_imaged_area_mm2":
+                round(float((missed & ~inside).sum() * grid_um ** 2 / 1e6), 2),
+        }
+    return {
+        "st_tissue_mm2": round(float(st.sum() * grid_um ** 2 / 1e6), 2),
+        "st_tissue_covered_by_all_if_pct": round(float((stack[st] == len(cfg.if_sections)).mean() * 100), 1),
+        "st_tissue_covered_by_no_if_pct": round(float((stack[st] == 0).mean() * 100), 1),
+        "per_section": per_section,
+        "note": ("GCs in tissue no IF section reaches cannot be matched. Lowering "
+                 "if_images.tissue_threshold_scale recovers dim tissue, but not tissue "
+                 "that is torn away or outside the imaged field."),
+    }
+
+
 def deliverables(cfg: Config) -> list[str]:
     return [
         f"05_viewer/{cfg.viewer.filename}",
@@ -129,6 +198,7 @@ def run(cfg: Config) -> None:
              "median_equiv_radius_um": round(m["median_equiv_radius_um"], 1)}
             for m in if_manifest
         ],
+        "if_coverage_of_st_tissue": if_coverage(cfg),
         "frozen_inputs": {
             "st_scaffold": str(cfg.st_scaffold.h5ad),
             "coord_key": cfg.st_scaffold.coord_key,
@@ -152,6 +222,14 @@ def run(cfg: Config) -> None:
         lines.append(f"{digest.hexdigest()}  {rel}")
     (ROOT / "SHA256SUMS.txt").write_text("\n".join(lines) + "\n")
 
+    cov = report["if_coverage_of_st_tissue"]
+    print(f"IF coverage of the Stereo-seq tissue ({cov['st_tissue_mm2']} mm2):")
+    for key, value in cov["per_section"].items():
+        flag = ("  <- includes %.2f mm2 outside the imaged area"
+                % value["missed_outside_imaged_area_mm2"]) if value["missed_outside_imaged_area_mm2"] > 0.05 else ""
+        print(f"   {key}: {value['covers_st_tissue_pct']:>5.1f}%  "
+              f"(misses {value['missed_mm2']:.2f} mm2){flag}")
+    print(f"   covered by every IF section: {cov['st_tissue_covered_by_all_if_pct']}%")
     print(json.dumps({k: report[k] for k in
                       ["stage_C_identity", "stage_D_columns"]}, indent=2, ensure_ascii=False))
     print(f"\nhashed {len(lines)} deliverables")

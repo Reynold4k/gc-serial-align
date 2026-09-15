@@ -99,3 +99,22 @@ sections agreed on handedness; how many GCs matched and how closely; the warp's
 cross-validation error; and the two-sided disagreement. Per GC: volume, maximum radius,
 radius variability, centroid drift across the stack. Plus the mesh checks — watertightness
 and mesh-versus-measured volume — and the standing caveats.
+
+## Check the IF coverage before reading anything into the 3D shapes
+
+`validation_report.json` reports, for each IF section, what fraction of the spatial
+transcriptomics tissue it actually reaches, and how much of the shortfall lies outside the
+imaged field altogether.
+
+This matters more than it sounds. A germinal centre can only be matched where the IF
+section covers it, so a section that is torn, folded, or scanned over a smaller field than
+the chip will silently produce GCs that look like they "disappear" on that plane. In our
+two replicates, only 68% and 75% of the transcriptomics tissue was covered by all five IF
+sections, and about a quarter of the GCs that were present on every transcriptomics
+section were missing from at least one IF plane as a result.
+
+Lowering `tissue_threshold_scale` recovers dim tissue, but it cannot recover tissue that
+is not there. A quick way to tell the two apart: sweep the threshold down and watch the
+number of detected GC objects. If coverage rises while the GC count stays flat, the extra
+area is empty and the missing GCs are a sectioning or imaging limitation, not a
+thresholding one. That is exactly what we saw — coverage 75% to 83%, GC count 278 to 277.
