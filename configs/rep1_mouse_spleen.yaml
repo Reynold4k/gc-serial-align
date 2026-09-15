@@ -62,4 +62,4 @@ viewer:
   st_hex: "#FF1493"              # your GC cluster's colour in your own atlas
   if_hex: "#0F52BA"              # sapphire
   default_z_exaggeration: 5
-  filename: gc_columns_rep1.html
+  filename: nine_slice_gc_columns_rep1.html

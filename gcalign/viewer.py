@@ -176,6 +176,8 @@ def run(cfg: Config) -> None:
         "info": info,
         "meta": {
             "sectionThicknessUm": Z_STEP_UM,
+            "nPlanes": len(PLANES),
+            "gcIdSource": cfg.st_scaffold.gc_id_col,
             "slabHalfUm": SLAB_HALF_UM,
             "nColumns": len(gc_ids),
             "totalFaces": int(col_payload["nf"]),

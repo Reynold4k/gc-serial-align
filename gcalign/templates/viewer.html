@@ -123,6 +123,7 @@ body{
 
     <div class="block" style="padding-bottom:10px">
       <input id="search" placeholder="Search GC id…" autocomplete="off">
+      <div class="lab" style="margin:9px 0 0;font-size:9.5px;letter-spacing:.06em">Ids match the curated four-slice atlas</div>
     </div>
 
     <div id="list"></div>
@@ -189,6 +190,22 @@ function facesFor(mesh, gc){
   }
   return {i, j, k};
 }
+/* Hover label: the curated GC id, so a structure spotted here can be looked up
+   straight away in the four-slice atlas - the ids are the same numbering. */
+function hoverText(mesh, prefix){
+  const out = new Array(mesh.owner.length);
+  const n = DATA.meta.nPlanes;
+  for (let v = 0; v < mesh.owner.length; v++){
+    const gid = mesh.owner[v];
+    const d = DATA.info[gid];
+    out[v] = d
+      ? (prefix ? prefix + '  ·  ' : '') + 'GC' + gid +
+        '  ·  ' + d.planes + '/' + n + ' planes  ·  ' + (d.vol / 1e6).toFixed(1) + ' nL'
+      : 'GC' + gid;
+  }
+  return out;
+}
+
 function tint(mesh, palette, flat){
   const out = new Array(mesh.owner.length);
   for (let v = 0; v < mesh.owner.length; v++) out[v] = flat || palette[mesh.owner[v]] || '#888';
@@ -232,6 +249,9 @@ function layout(){
   return {
     paper_bgcolor: '#05070d', plot_bgcolor: '#05070d',
     margin: {l: 0, r: 0, t: 0, b: 0}, showlegend: false,
+    hoverlabel: {bgcolor: '#111a2e', bordercolor: '#31456e',
+                 font: {color: '#e6ecfa', size: 12,
+                        family: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'}},
     scene: {
       bgcolor: '#05070d',
       xaxis: {range: f.b.x, visible: false}, yaxis: {range: f.b.y, visible: false},
@@ -278,19 +298,22 @@ function buildTraces(){
   const out = [{
     type: 'mesh3d', x: COL.x, y: COL.y, z: COL.z, i: COL.i, j: COL.j, k: COL.k,
     vertexcolor: tint(COL, DATA.identity), opacity: 1, flatshading: false,
-    hoverinfo: 'skip', name: 'columns', showscale: false,
+    text: hoverText(COL, null), hoverinfo: 'text', hovertemplate: '%{text}<extra></extra>',
+    name: 'columns', showscale: false,
     lighting: shell, lightposition: light
   }, {
     type: 'mesh3d', x: SHELL.x, y: SHELL.y, z: SHELL.z, i: SHELL.i, j: SHELL.j, k: SHELL.k,
     color: GLASS.if, opacity: 0.11, flatshading: false,
-    hoverinfo: 'skip', name: 'envelope', showscale: false, visible: false,
+    text: hoverText(SHELL, null), hoverinfo: 'text', hovertemplate: '%{text}<extra></extra>',
+    name: 'envelope', showscale: false, visible: false,
     lighting: shell, lightposition: light
   }];
   for (const p of PLANES){
     out.push({
       type: 'mesh3d', x: p.x, y: p.y, z: p.z, i: p.i, j: p.j, k: p.k,
       vertexcolor: tint(p, DATA.identity), opacity: 1, flatshading: false,
-      hoverinfo: 'skip', name: p.name, showscale: false, visible: false,
+      text: hoverText(p, p.name), hoverinfo: 'text', hovertemplate: '%{text}<extra></extra>',
+      name: p.name, showscale: false, visible: false,
       lighting: slab, lightposition: light
     });
   }
@@ -360,7 +383,7 @@ function buildList(filter){
     row.innerHTML =
       '<span class="dot" style="background:' + swatch + '"></span>' +
       '<span class="id mono">GC' + gid + '</span>' +
-      '<span class="meta mono">' + d.planes + '/9 · ' + (d.vol / 1e6).toFixed(1) + ' nL</span>';
+      '<span class="meta mono">' + d.planes + '/' + DATA.meta.nPlanes + ' · ' + (d.vol / 1e6).toFixed(1) + ' nL</span>';
     row.onclick = () => selectGC(S.gc === gid ? null : gid);
     box.appendChild(row);
   }
@@ -375,7 +398,7 @@ function showInfo(){
   const d = DATA.info[S.gc];
   box.innerHTML =
     '<div class="big">GC' + S.gc + '</div><dl class="mono">' +
-    '<dt>Planes</dt><dd>' + d.planes + '/9 &nbsp;(ST ' + d.st + ' · IF ' + d['if'] + ')</dd>' +
+    '<dt>Planes</dt><dd>' + d.planes + '/' + DATA.meta.nPlanes + ' &nbsp;(ST ' + d.st + ' · IF ' + d['if'] + ')</dd>' +
     '<dt>Volume</dt><dd>' + (d.vol / 1e6).toFixed(2) + ' nL</dd>' +
     '<dt>Max radius</dt><dd>' + d.rmax.toFixed(0) + ' µm</dd>' +
     '<dt>Radius CV</dt><dd>' + d.cv.toFixed(3) + '</dd>' +

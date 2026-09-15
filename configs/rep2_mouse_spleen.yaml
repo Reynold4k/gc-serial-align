@@ -58,4 +58,4 @@ viewer:
   st_hex: "#FF4500"              # leiden_merged cluster 6 = GC in rep2's clustering
   if_hex: "#0F52BA"
   default_z_exaggeration: 5
-  filename: gc_columns_rep2.html
+  filename: nine_slice_gc_columns_rep2.html
