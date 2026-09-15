@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gcalign"
+version = "0.1.0"
+description = "Align serial immunofluorescence sections into a spatial-transcriptomics frame and reconstruct germinal centres in 3D"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+dependencies = [
+  "numpy>=1.24", "scipy>=1.10", "pandas>=2.0", "scikit-image>=0.22",
+  "h5py>=3.9", "tifffile>=2023.7", "aicspylibczi>=4.0",
+  "pyvista>=0.43", "plotly>=5.18", "PyYAML>=6.0",
+]
+
+[project.scripts]
+gcalign = "gcalign.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["gcalign*"]
+
+[tool.setuptools.package-data]
+gcalign = ["templates/*.html"]

@@ -1,0 +1,65 @@
+# The experiment this package was built for: mouse spleen, nine consecutive
+# 10 um cryosections, immunofluorescence and Stereo-seq cut alternately.
+#
+# Every path below is specific to our cluster. Copy this file, change the paths
+# and the section list, and the pipeline follows your experiment instead.
+
+name: rep1_mouse_spleen
+output_dir: ./out/rep1
+
+# --- the sections, in the order you cut them -------------------------------
+# kind: IF = immunofluorescence, ST = spatial transcriptomics.
+# `source` is the CZI filename index for IF, and the slice label used inside the
+# AnnData for ST (it must match the values in st_scaffold.slice_col).
+section_thickness_um: 10.0
+sections:
+  - {index: 1, kind: IF, source: 1}
+  - {index: 2, kind: ST, source: D1, name: D1}
+  - {index: 3, kind: IF, source: 3}
+  - {index: 4, kind: ST, source: E3, name: E3}
+  - {index: 5, kind: IF, source: 5}
+  - {index: 6, kind: ST, source: G4, name: G4}
+  - {index: 7, kind: IF, source: 7}
+  - {index: 8, kind: ST, source: G5, name: G5}
+  - {index: 9, kind: IF, source: 9}
+
+# --- the immunofluorescence images -----------------------------------------
+if_images:
+  dir: /data/projects/punim1236/Stereoseqv1.3_IF_images/260709_Stereoseqv1.3_SP_exp1
+  filename_template: "Section{index}_stitched.czi"
+  um_per_px: 0.8286425781249999
+  channels:            # channel index in the CZI -> the marker on it
+    0: IgD_AF647
+    1: CD4_AF594
+    2: GL7_AF488
+    3: DAPI
+  gc_channel: GL7_AF488          # the marker that lights up germinal centres
+  tissue_channels:               # weights for cutting the tissue outline
+    CD4_AF594: 1.0               # present across the whole section
+    IgD_AF647: 0.6
+    GL7_AF488: 0.3
+  min_gc_px: 30                  # 3000 um^2, equivalent radius >= 31 um
+
+# --- the already-registered spatial transcriptomics -------------------------
+st_scaffold:
+  h5ad: /data/scratch/projects/punim1236/AAA_Chen_is_here/A_v13简单QC/04isotype分析/新版本/04新版本合并GC/全局_bin20对齐/v4_GC排序修正/four_slice_gc_matching_alignment_v4.h5ad
+  coord_key: align_deformable    # obsm key holding the registered coordinates
+  slice_col: slice_short         # obs column naming each section
+  gc_id_col: gc_match_curated_final_id
+  cluster_col: leiden_merged
+  dnb_um: 0.5                    # one spatial unit in micrometres
+
+align:
+  grid_um: 10.0                  # common pixel size; match your ST bin size
+
+columns:
+  target_faces: 700
+  shell_faces: 300
+
+viewer:
+  title: Nine-slice GC columns
+  subtitle: "rep1 · 9 × 10 µm"
+  st_hex: "#FF1493"              # your GC cluster's colour in your own atlas
+  if_hex: "#0F52BA"              # sapphire
+  default_z_exaggeration: 5
+  filename: gc_columns_rep1.html

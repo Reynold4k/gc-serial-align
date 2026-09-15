@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+:root{
+  --bg:#05070d; --panel:#0b1020; --panel-2:#121a30; --line:#1e2a45;
+  --ink:#e6ecfa; --ink-2:#aebbd6; --muted:#6d7d9c;
+  --sapphire:#4a8cff; --magenta:#ff1493;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{
+  background:var(--bg); color:var(--ink);
+  font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  overflow:hidden;
+}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
+
+#app{display:flex;height:100vh}
+#side{width:268px;flex:none;background:var(--panel);border-right:1px solid var(--line);
+      display:flex;flex-direction:column;overflow:hidden}
+#plot{flex:1;min-width:0;position:relative}
+
+.brand{padding:16px 16px 13px;border-bottom:1px solid var(--line)}
+.brand h1{margin:0;font-size:15px;font-weight:600;letter-spacing:.01em}
+.brand .sub{margin-top:3px;font-size:11px;color:var(--muted);letter-spacing:.04em}
+
+.block{padding:14px 16px;border-bottom:1px solid var(--line)}
+.lab{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);
+     margin-bottom:9px;font-weight:600}
+.lab em{font-style:normal;text-transform:none;letter-spacing:0;color:#55647f}
+
+.views{display:grid;grid-template-columns:repeat(2,1fr);gap:5px}
+.views button{appearance:none;border:1px solid var(--line);background:var(--panel-2);color:var(--ink-2);
+  padding:9px 4px;border-radius:3px;cursor:pointer;font-size:12.5px;font-weight:500;
+  transition:background .14s,color .14s,border-color .14s}
+.views button:hover{border-color:#31456e;color:var(--ink)}
+.views button[data-on="1"]{background:#16243f;color:#fff;border-color:var(--sapphire)}
+.views button[data-on="1"][data-kind="st"]{border-color:var(--magenta)}
+
+.chips{display:flex;flex-wrap:wrap;gap:5px}
+.chips button{appearance:none;border:1px solid var(--line);background:transparent;color:var(--ink-2);
+  padding:5px 10px;border-radius:99px;cursor:pointer;font-size:11.5px}
+.chips button:hover{border-color:#31456e;color:var(--ink)}
+.chips button[data-kind="IF"]{color:#8fb4f0}
+.chips button[data-kind="ST"]{color:#e089b8}
+.chips button[data-on="1"]{background:var(--sapphire);border-color:var(--sapphire);color:#04101f;font-weight:600}
+.chips button[data-kind="ST"][data-on="1"]{background:var(--magenta);border-color:var(--magenta);color:#28020f}
+
+.sld{display:flex;align-items:center;gap:9px}
+.sld input[type=range]{flex:1;accent-color:var(--sapphire);background:transparent}
+.sld .val{font-size:11.5px;color:var(--ink-2);width:46px;text-align:right}
+
+#search{width:100%;background:var(--panel-2);border:1px solid var(--line);color:var(--ink);
+  padding:7px 9px;border-radius:3px;font-size:12.5px}
+#search::placeholder{color:var(--muted)}
+#search:focus{outline:none;border-color:var(--sapphire)}
+
+#list{flex:1;overflow-y:auto;padding:6px 8px 14px}
+#list::-webkit-scrollbar{width:8px}
+#list::-webkit-scrollbar-thumb{background:#1d2a46;border-radius:4px}
+.row{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:3px;cursor:pointer;
+     font-size:12.5px;color:var(--ink-2)}
+.row:hover{background:#111a2e;color:var(--ink)}
+.row[data-on="1"]{background:#17243e;color:#fff}
+.row .dot{width:10px;height:10px;border-radius:2px;flex:none}
+.row .id{width:48px}
+.row .meta{margin-left:auto;font-size:10.5px;color:var(--muted)}
+.row[data-on="1"] .meta{color:var(--ink-2)}
+
+#info{padding:12px 16px;border-top:1px solid var(--line);font-size:11.5px;color:var(--ink-2);min-height:92px}
+#info .big{font-size:14px;color:#fff;font-weight:600;margin-bottom:6px}
+#info dl{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;margin:0}
+#info dt{color:var(--muted)}
+#info dd{margin:0;text-align:right}
+#info .hint{color:var(--muted)}
+
+#badge{position:absolute;left:16px;top:14px;z-index:5;pointer-events:none;
+       font-size:11px;color:var(--muted);letter-spacing:.05em}
+#badge b{color:var(--ink-2);font-weight:500}
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="side">
+    <div class="brand">
+      <h1>__TITLE__</h1>
+      <div class="sub mono">__SUBTITLE__ · <span id="ncol"></span> GC</div>
+    </div>
+
+    <div class="block">
+      <div class="lab">View</div>
+      <div class="views">
+        <button data-view="columns" data-on="1">Columns</button>
+        <button data-view="st" data-kind="st">ST</button>
+        <button data-view="if">IF</button>
+        <button data-view="both">ST + IF</button>
+      </div>
+    </div>
+
+    <div class="block" id="sliceBlock" hidden>
+      <div class="lab">Section <em>— click to x-ray</em></div>
+      <div class="chips" id="chips"></div>
+    </div>
+
+    <div class="block">
+      <div class="lab">Z exaggeration</div>
+      <div class="sld">
+        <input type="range" id="zs" min="1" max="24" step="1" value="__ZDEFAULT__">
+        <span class="val mono" id="zsv">__ZDEFAULT__×</span>
+      </div>
+      <div id="opBlock">
+        <div class="lab" style="margin-top:12px">Column opacity</div>
+        <div class="sld">
+          <input type="range" id="op" min="0" max="60" step="1" value="11">
+          <span class="val mono" id="opv">0.11</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="block" style="padding-bottom:10px">
+      <input id="search" placeholder="Search GC id…" autocomplete="off">
+    </div>
+
+    <div id="list"></div>
+    <div id="info"><span class="hint">Click a column or a list row to select a GC</span></div>
+  </aside>
+
+  <main id="plot"><div id="badge"></div></main>
+</div>
+
+<script>__PLOTLYJS__</script>
+<script>
+const DATA = __PAYLOAD__;
+
+/* ---------- decode ---------- */
+function raw(b64){
+  const bin = atob(b64), out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function coords(b64, n){
+  const q = new Uint16Array(raw(b64).buffer);
+  const x = new Float32Array(n), y = new Float32Array(n), z = new Float32Array(n);
+  const lo = DATA.lo, sp = DATA.span;
+  for (let i = 0; i < n; i++){
+    x[i] = lo[0] + q[i*3    ] / 65535 * sp[0];
+    y[i] = lo[1] + q[i*3 + 1] / 65535 * sp[1];
+    z[i] = lo[2] + q[i*3 + 2] / 65535 * sp[2];
+  }
+  return {x, y, z};
+}
+function faces(b64, bytes, nf){
+  const buf = raw(b64).buffer;
+  const a = bytes === 2 ? new Uint16Array(buf) : new Uint32Array(buf);
+  const i = new Uint32Array(nf), j = new Uint32Array(nf), k = new Uint32Array(nf);
+  for (let t = 0; t < nf; t++){ i[t] = a[t*3]; j[t] = a[t*3+1]; k[t] = a[t*3+2]; }
+  return {i, j, k};
+}
+function withOwners(spec){
+  const m = {...coords(spec.xyz, spec.n), ...faces(spec.f, spec.fBytes, spec.nf),
+             owner: new Uint16Array(raw(spec.owner).buffer)};
+  m.faceOwner = new Uint16Array(m.i.length);
+  for (let t = 0; t < m.i.length; t++) m.faceOwner[t] = m.owner[m.i[t]];
+  return m;
+}
+
+/* One merged column mesh. 53 separate traces cost ~1.5 s per dragged frame;
+   merged, the same geometry stays interactive. */
+const COL = withOwners(DATA.columns);
+/* the translucent envelope is blurry by design, so it uses a low-poly copy:
+   transparent geometry is the most expensive thing on the page */
+const SHELL = withOwners(DATA.shell);
+const PLANES = DATA.planes.map(p => ({name: p.name, kind: p.kind, z: p.z, ...withOwners(p)}));
+const COL_TRACE = 0, SHELL_TRACE = 1, PLANE0 = 2;
+
+function facesFor(mesh, gc){
+  if (gc === null) return {i: mesh.i, j: mesh.j, k: mesh.k};
+  let n = 0;
+  for (let t = 0; t < mesh.faceOwner.length; t++) if (mesh.faceOwner[t] === gc) n++;
+  const i = new Uint32Array(n), j = new Uint32Array(n), k = new Uint32Array(n);
+  let w = 0;
+  for (let t = 0; t < mesh.faceOwner.length; t++){
+    if (mesh.faceOwner[t] !== gc) continue;
+    i[w] = mesh.i[t]; j[w] = mesh.j[t]; k[w] = mesh.k[t]; w++;
+  }
+  return {i, j, k};
+}
+function tint(mesh, palette, flat){
+  const out = new Array(mesh.owner.length);
+  for (let v = 0; v < mesh.owner.length; v++) out[v] = flat || palette[mesh.owner[v]] || '#888';
+  return out;
+}
+
+/* ---------- state ---------- */
+const S = {view: 'columns', slice: null, gc: null, zScale: __ZDEFAULT__, envelope: 0.11};
+const GLASS = {st: '#ff9ed2', if: '#9dc6ff', both: '#cdb6ec'};
+/* which sections each view draws, in true physical order */
+const KINDS = {columns: [], st: ['ST'], if: ['IF'], both: ['ST', 'IF']};
+const paletteFor = v => v === 'st' ? DATA.stColours : v === 'if' ? DATA.ifColours : DATA.identity;
+/* in the combined view every section keeps its own family, so the stack reads
+   blue, pink, blue, pink down the z axis */
+const planePalette = (view, kind) =>
+  kind === 'ST' ? (view === 'if' ? DATA.ifColours : DATA.stColours)
+                : (view === 'st' ? DATA.stColours : DATA.ifColours);
+
+/* ---------- framing ---------- */
+function frame(){
+  let x0, x1, y0, y1;
+  if (S.gc === null){
+    x0 = DATA.lo[0]; x1 = DATA.lo[0] + DATA.span[0];
+    y0 = DATA.lo[1]; y1 = DATA.lo[1] + DATA.span[1];
+  } else {
+    const b = DATA.meta.perGcBounds[S.gc];
+    x0 = b[0]; x1 = b[1]; y0 = b[2]; y1 = b[3];
+  }
+  const px = (x1 - x0) * 0.06 + 30, py = (y1 - y0) * 0.06 + 30;
+  const b = {x: [x0 - px, x1 + px], y: [y0 - py, y1 + py],
+             z: [DATA.lo[2] - 8, DATA.lo[2] + DATA.span[2] + 8]};
+  const sx = b.x[1] - b.x[0], sy = b.y[1] - b.y[0], sz = b.z[1] - b.z[0];
+  const base = Math.max(sx, sy);
+  const a = {x: sx / base, y: sy / base, z: sz / base * S.zScale};
+  const m = Math.max(a.x, a.y, a.z);
+  return {b, aspect: {x: a.x / m, y: a.y / m, z: a.z / m}};
+}
+
+function layout(){
+  const f = frame();
+  return {
+    paper_bgcolor: '#05070d', plot_bgcolor: '#05070d',
+    margin: {l: 0, r: 0, t: 0, b: 0}, showlegend: false,
+    scene: {
+      bgcolor: '#05070d',
+      xaxis: {range: f.b.x, visible: false}, yaxis: {range: f.b.y, visible: false},
+      zaxis: {range: f.b.z, visible: false},
+      aspectmode: 'manual', aspectratio: f.aspect,
+      camera: {eye: {...EYE0}, up: {x: 0, y: 0, z: 1}},
+      dragmode: 'turntable'
+    }
+  };
+}
+const EYE0 = {x: 0.57, y: -0.82, z: 0.53};
+const R0 = Math.hypot(EYE0.x, EYE0.y, EYE0.z);
+
+/* The viewport is wider than it is tall, so a box whose long axis is z needs the
+   camera further back than one that is long in x/y, or it runs off the top. */
+function radiusFor(aspect){ return R0 * (1 + 0.62 * aspect.z); }
+
+/* flat keys only, so the user's current orientation survives every update;
+   only the distance is re-fitted */
+function reframe(){
+  const f = frame();
+  const gd = document.getElementById('plot');
+  let dir = EYE0;
+  try {
+    const live = gd._fullLayout.scene._scene.getCamera().eye;
+    if (Math.hypot(live.x, live.y, live.z) > 1e-6) dir = live;
+  } catch (err) { /* first call, before the scene exists */ }
+  const n = Math.hypot(dir.x, dir.y, dir.z);
+  const r = radiusFor(f.aspect) / n;
+  Plotly.relayout('plot', {
+    'scene.xaxis.range': f.b.x, 'scene.yaxis.range': f.b.y, 'scene.zaxis.range': f.b.z,
+    'scene.aspectratio.x': f.aspect.x, 'scene.aspectratio.y': f.aspect.y,
+    'scene.aspectratio.z': f.aspect.z,
+    'scene.camera.eye.x': dir.x * r, 'scene.camera.eye.y': dir.y * r,
+    'scene.camera.eye.z': dir.z * r
+  });
+}
+
+/* ---------- traces ---------- */
+function buildTraces(){
+  const shell = {ambient: 0.42, diffuse: 0.82, specular: 0.85, roughness: 0.18, fresnel: 1.4};
+  const slab  = {ambient: 0.55, diffuse: 0.75, specular: 0.9,  roughness: 0.12, fresnel: 1.8};
+  const light = {x: 8000, y: -6000, z: 12000};
+  const out = [{
+    type: 'mesh3d', x: COL.x, y: COL.y, z: COL.z, i: COL.i, j: COL.j, k: COL.k,
+    vertexcolor: tint(COL, DATA.identity), opacity: 1, flatshading: false,
+    hoverinfo: 'skip', name: 'columns', showscale: false,
+    lighting: shell, lightposition: light
+  }, {
+    type: 'mesh3d', x: SHELL.x, y: SHELL.y, z: SHELL.z, i: SHELL.i, j: SHELL.j, k: SHELL.k,
+    color: GLASS.if, opacity: 0.11, flatshading: false,
+    hoverinfo: 'skip', name: 'envelope', showscale: false, visible: false,
+    lighting: shell, lightposition: light
+  }];
+  for (const p of PLANES){
+    out.push({
+      type: 'mesh3d', x: p.x, y: p.y, z: p.z, i: p.i, j: p.j, k: p.k,
+      vertexcolor: tint(p, DATA.identity), opacity: 1, flatshading: false,
+      hoverinfo: 'skip', name: p.name, showscale: false, visible: false,
+      lighting: slab, lightposition: light
+    });
+  }
+  return out;
+}
+
+/* ---------- render ---------- */
+function render(reLayout){
+  const pal = paletteFor(S.view);
+  const showPlanes = S.view !== 'columns';
+  const kinds = KINDS[S.view];
+
+  const colFaces = facesFor(COL, S.gc);
+  Plotly.restyle('plot', {
+    visible: [!showPlanes],
+    vertexcolor: [tint(COL, pal)],
+    opacity: [1],
+    i: [colFaces.i], j: [colFaces.j], k: [colFaces.k]
+  }, [COL_TRACE]);
+
+  /* the combined view shows the sections alone - no GC outline */
+  const showShell = showPlanes && S.view !== 'both';
+  const shellFaces = facesFor(SHELL, S.gc);
+  Plotly.restyle('plot', {
+    visible: [showShell],
+    color: [GLASS[S.view] || GLASS.both],
+    opacity: [S.gc === null ? S.envelope : Math.min(S.envelope + 0.13, 0.45)],
+    i: [shellFaces.i], j: [shellFaces.j], k: [shellFaces.k]
+  }, [SHELL_TRACE]);
+
+  const vis = [], col = [], opa = [], pi = [], pj = [], pk = [];
+  PLANES.forEach(p => {
+    const on = showPlanes && kinds.includes(p.kind);
+    vis.push(on);
+    const focus = S.slice === null || S.slice === p.name;
+    opa.push(on ? (focus ? 1 : 0.16) : 1);
+    col.push(tint(p, planePalette(S.view, p.kind)));
+    const f = on ? facesFor(p, S.gc) : {i: p.i, j: p.j, k: p.k};
+    pi.push(f.i); pj.push(f.j); pk.push(f.k);
+  });
+  Plotly.restyle('plot', {visible: vis, vertexcolor: col, opacity: opa, i: pi, j: pj, k: pk},
+                 PLANES.map((_, n) => n + PLANE0));
+
+  if (reLayout) reframe();
+
+  const names = {columns: 'Columns', st: 'Stereo-seq', if: 'IF', both: 'ST + IF'};
+  document.getElementById('badge').innerHTML =
+    '<b>' + names[S.view] + '</b>' + (S.slice ? ' · ' + S.slice : '') +
+    (S.gc ? ' · GC' + S.gc : '') + ' · z ×' + S.zScale;
+}
+
+/* ---------- sidebar ---------- */
+function buildList(filter){
+  const box = document.getElementById('list');
+  const pal = paletteFor(S.view);
+  box.innerHTML = '';
+  for (const gid of DATA.ids){
+    if (filter && !String(gid).startsWith(filter)) continue;
+    const d = DATA.info[gid];
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.dataset.gc = gid;
+    if (S.gc === gid) row.dataset.on = '1';
+    const swatch = S.view === 'both'
+      ? 'linear-gradient(90deg,' + DATA.stColours[gid] + ' 50%,' + DATA.ifColours[gid] + ' 50%)'
+      : pal[gid];
+    row.innerHTML =
+      '<span class="dot" style="background:' + swatch + '"></span>' +
+      '<span class="id mono">GC' + gid + '</span>' +
+      '<span class="meta mono">' + d.planes + '/9 · ' + (d.vol / 1e6).toFixed(1) + ' nL</span>';
+    row.onclick = () => selectGC(S.gc === gid ? null : gid);
+    box.appendChild(row);
+  }
+}
+
+function showInfo(){
+  const box = document.getElementById('info');
+  if (S.gc === null){
+    box.innerHTML = '<span class="hint">Click a column or a list row to select a GC</span>';
+    return;
+  }
+  const d = DATA.info[S.gc];
+  box.innerHTML =
+    '<div class="big">GC' + S.gc + '</div><dl class="mono">' +
+    '<dt>Planes</dt><dd>' + d.planes + '/9 &nbsp;(ST ' + d.st + ' · IF ' + d['if'] + ')</dd>' +
+    '<dt>Volume</dt><dd>' + (d.vol / 1e6).toFixed(2) + ' nL</dd>' +
+    '<dt>Max radius</dt><dd>' + d.rmax.toFixed(0) + ' µm</dd>' +
+    '<dt>Radius CV</dt><dd>' + d.cv.toFixed(3) + '</dd>' +
+    '<dt>Centroid drift</dt><dd>' + d.drift.toFixed(0) + ' µm</dd></dl>';
+}
+
+function selectGC(gid){
+  S.gc = gid;
+  document.querySelectorAll('#list .row').forEach(r =>
+    r.dataset.on = (+r.dataset.gc === gid) ? '1' : '0');
+  showInfo();
+  render(true);
+}
+
+function syncChips(){
+  [...document.getElementById('chips').children].forEach(c =>
+    c.dataset.on = (c.textContent === S.slice) ? '1' : '0');
+}
+
+function setView(view){
+  S.view = view;
+  S.slice = null;
+  document.querySelectorAll('.views button').forEach(b =>
+    b.dataset.on = (b.dataset.view === view) ? '1' : '0');
+  document.getElementById('sliceBlock').hidden = (view === 'columns');
+  document.getElementById('opBlock').hidden = (view === 'columns' || view === 'both');
+  const chips = document.getElementById('chips');
+  chips.className = 'chips';
+  chips.innerHTML = '';
+  for (const p of PLANES.filter(p => KINDS[view].includes(p.kind))){
+    const b = document.createElement('button');
+    b.textContent = p.name;
+    b.dataset.kind = p.kind;
+    b.onclick = () => { S.slice = (S.slice === p.name) ? null : p.name; syncChips(); render(false); };
+    chips.appendChild(b);
+  }
+  buildList(document.getElementById('search').value.trim());
+  render(true);
+}
+
+/* ---------- boot ---------- */
+document.getElementById('ncol').textContent = DATA.meta.nColumns;
+Plotly.newPlot('plot', buildTraces(), layout(),
+               {responsive: true, displaylogo: false,
+                modeBarButtonsToRemove: ['toImage']}).then(() => {
+  render(true);
+  document.getElementById('plot').on('plotly_click', ev => {
+    const pt = ev.points && ev.points[0];
+    if (!pt) return;
+    if (pt.curveNumber === COL_TRACE){
+      selectGC(COL.owner[pt.pointNumber] || null);
+    } else if (pt.curveNumber === SHELL_TRACE){
+      selectGC(SHELL.owner[pt.pointNumber] || null);
+    } else {
+      const p = PLANES[pt.curveNumber - PLANE0];
+      if (!p) return;
+      S.slice = p.name;
+      syncChips();
+      selectGC(p.owner[pt.pointNumber] || null);
+    }
+  });
+});
+
+document.querySelectorAll('.views button').forEach(b =>
+  b.onclick = () => setView(b.dataset.view));
+document.getElementById('zs').oninput = e => {
+  S.zScale = +e.target.value;
+  document.getElementById('zsv').textContent = S.zScale + '×';
+  render(true);
+};
+document.getElementById('op').oninput = e => {
+  S.envelope = +e.target.value / 100;
+  document.getElementById('opv').textContent = S.envelope.toFixed(2);
+  render(false);
+};
+document.getElementById('search').oninput = e => buildList(e.target.value.trim());
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key === 'Escape') selectGC(null);
+  if (e.key === '1') setView('columns');
+  if (e.key === '2') setView('st');
+  if (e.key === '3') setView('if');
+  if (e.key === '4') setView('both');
+});
+buildList('');
+</script>
+</body>
+</html>
