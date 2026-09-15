@@ -50,8 +50,12 @@ def choose_smoothing(cfg, src, dst):
     return best[0], best[1], curve
 
 
-def warp_labels(cfg, mask, labels_by_object, linear, offset, inverse_tps, grid):
-    """Pull-sample the IF label map onto the world grid through A then B."""
+def source_pixels(cfg, shape, linear, offset, inverse_tps, grid):
+    """For every world-grid pixel, the IF pixel it came from (through A then B).
+
+    Computed once and reused for the labels and for the fluorescence channels, so
+    the warped image and the warped mask can never drift apart.
+    """
     x0, y0, height, width = grid
     GRID_UM = cfg.grid_um
     rows, cols = np.indices((height, width))
@@ -60,10 +64,21 @@ def warp_labels(cfg, mask, labels_by_object, linear, offset, inverse_tps, grid):
     local = (pre - offset) @ np.linalg.inv(linear).T
     src_c = np.rint(local[:, 0] / GRID_UM).astype(int)
     src_r = np.rint(local[:, 1] / GRID_UM).astype(int)
-    ok = (src_r >= 0) & (src_r < mask.shape[0]) & (src_c >= 0) & (src_c < mask.shape[1])
-    out = np.zeros(height * width, np.int32)
-    out[ok] = labels_by_object[src_r[ok], src_c[ok]]
-    return out.reshape(height, width)
+    ok = (src_r >= 0) & (src_r < shape[0]) & (src_c >= 0) & (src_c < shape[1])
+    return src_r, src_c, ok, (height, width)
+
+
+def sample(plane, src_r, src_c, ok, out_shape, dtype):
+    out = np.zeros(out_shape[0] * out_shape[1], dtype)
+    out[ok] = plane[src_r[ok], src_c[ok]]
+    return out.reshape(out_shape)
+
+
+def warp_labels(cfg, mask, labels_by_object, linear, offset, inverse_tps, grid):
+    """Pull-sample the IF label map onto the world grid through A then B."""
+    src_r, src_c, ok, out_shape = source_pixels(
+        cfg, mask.shape, linear, offset, inverse_tps, grid)
+    return sample(labels_by_object, src_r, src_c, ok, out_shape, np.int32)
 
 
 def run(cfg: Config) -> None:
@@ -90,6 +105,7 @@ def run(cfg: Config) -> None:
     }
 
     plane_labels: dict[str, np.ndarray] = {}
+    warped_channels: dict[str, np.ndarray] = {}
 
     # --- Stereo-seq planes: rasterise the frozen scaffold, no movement -----
     for name in cfg.st_names:
@@ -184,7 +200,18 @@ def run(cfg: Config) -> None:
         for offset_id, row in enumerate(unmatched, start=1):
             object_to_gc[row + 1] = -offset_id          # IF-only object
         id_map = object_to_gc[labels]
-        plane_labels[key] = warp_labels(cfg, gc, id_map, linear, offset, inverse, grid)
+        src_r, src_c, ok, out_shape = source_pixels(
+            cfg, gc.shape, linear, offset, inverse, grid)
+        plane_labels[key] = sample(id_map, src_r, src_c, ok, out_shape, np.int32)
+
+        # the fluorescence itself, warped by exactly the same map, so figures can
+        # show the real stain under the segmented outline rather than a flat fill
+        for channel in cfg.if_images.channels.values():
+            plane = data[channel].astype(np.float32)
+            top = np.percentile(plane[plane > 0], 99.9) if (plane > 0).any() else 1.0
+            scaled = np.clip(plane / max(top, 1e-6), 0, 1) * 65535.0
+            warped_channels[f"{key}|{channel}"] = sample(
+                scaled.astype(np.uint16), src_r, src_c, ok, out_shape, np.uint16)
 
         report[key] = {
             "n_if_objects": int(n_obj),
@@ -208,6 +235,11 @@ def run(cfg: Config) -> None:
     np.savez_compressed(OUT / "plane_gc_labels.npz",
                         **plane_labels,
                         grid=np.array([grid[0], grid[1], grid[2], grid[3]], np.float64))
+    np.savez_compressed(OUT / "if_channels_warped.npz",
+                        **warped_channels,
+                        grid=np.array([grid[0], grid[1], grid[2], grid[3]], np.float64),
+                        channels=np.array(sorted(cfg.if_images.channels.values()), dtype="U32"))
+    print(f"warped {len(warped_channels)} IF channel planes into the aligned frame")
 
     # --- presence table over all nine planes ------------------------------
     rows = []
