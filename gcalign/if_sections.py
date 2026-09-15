@@ -43,7 +43,7 @@ def _combined(cfg: Config, planes: dict[str, np.ndarray], sigma: float) -> np.nd
 def tissue_mask(cfg: Config, planes: dict[str, np.ndarray], sigma: float = 6.0):
     """One connected section, smoothed across the ~77 px stitching ripple."""
     combined = _combined(cfg, planes, sigma)
-    mask = combined > filters.threshold_otsu(combined)
+    mask = combined > cfg.if_images.tissue_threshold_scale * filters.threshold_otsu(combined)
     mask = morphology.binary_closing(mask, morphology.disk(8))
     mask = ndi.binary_fill_holes(mask)
     mask = morphology.remove_small_objects(mask, 5000)

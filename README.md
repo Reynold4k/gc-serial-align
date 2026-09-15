@@ -211,8 +211,14 @@ st_scaffold:
   gc_id_col: gc_match_curated_final_id
 ```
 
-A complete, working example is in
-[`configs/rep1_mouse_spleen.yaml`](configs/rep1_mouse_spleen.yaml).
+Two complete, working examples ship with the package:
+[`configs/rep1_mouse_spleen.yaml`](configs/rep1_mouse_spleen.yaml) and
+[`configs/rep2_mouse_spleen.yaml`](configs/rep2_mouse_spleen.yaml). They are the same
+experiment run on two biological replicates, and the differences between them are
+instructive: the second replicate labels its sections with full chip ids rather than
+short ones, its germinal-centre cluster has a different number and colour in its own
+clustering, and one of its sections has a staining gradient that needs
+`tissue_threshold_scale` turned down. All of that is config, not code.
 
 ### Run
 

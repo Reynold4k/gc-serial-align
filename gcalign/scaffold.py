@@ -28,8 +28,22 @@ def run(cfg: Config) -> None:
     DNB_UM = cfg.st_scaffold.dnb_um
     SLICE_ORDER = cfg.st_names
     SECTION_OF_SLICE = {s.name: s.index for s in cfg.st_sections}
+    # The AnnData labels its sections however it likes ("D1", or "B06286A4").
+    # Translate them once, here, into the display names used by the config and
+    # everything downstream, so long chip ids do not have to leak into the UI.
+    label_of = {s.source: s.name for s in cfg.st_sections}
     with h5py.File(V4, "r") as handle:
-        slice_short = categorical(handle, cfg.st_scaffold.slice_col)
+        raw_labels = categorical(handle, cfg.st_scaffold.slice_col)
+        unknown = sorted(set(raw_labels) - set(label_of))
+        missing = sorted(set(label_of) - set(raw_labels))
+        if missing:
+            raise ValueError(
+                f"config names Stereo-seq sections {missing} that are not in "
+                f"obs['{cfg.st_scaffold.slice_col}'] (which holds {sorted(set(raw_labels))})")
+        if unknown:
+            print(f"  note: ignoring {len(unknown)} section(s) present in the AnnData but "
+                  f"not listed in the config: {unknown}")
+        slice_short = np.array([label_of.get(v, v) for v in raw_labels])
         leiden = (categorical(handle, cfg.st_scaffold.cluster_col)
                   if cfg.st_scaffold.cluster_col else
                   np.full(len(slice_short), "NA"))
@@ -40,8 +54,8 @@ def run(cfg: Config) -> None:
     world = deformable * DNB_UM                      # micrometres, frozen scaffold
     np.savez_compressed(
         OUT / "st_scaffold.npz",
-        slice_short=slice_short.astype("U2"),
-        leiden=leiden.astype("U3"),
+        slice_short=slice_short,      # never truncate: chip ids can be long
+        leiden=leiden.astype(str),
         gc_id=gc_id,
         world_um=world.astype(np.float32),
         chip_um=(spatial * DNB_UM).astype(np.float32),

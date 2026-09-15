@@ -32,6 +32,10 @@ class IFImages:
     tissue_channels: dict[str, float]
     min_gc_px: int = 30
     filename_template: str = "Section{index}_stitched.czi"
+    # Multiplier on the Otsu tissue threshold. Leave at 1.0 unless a section has
+    # an illumination or staining gradient across it, in which case a global
+    # threshold drops the dim side of the section; ~0.6 recovers it.
+    tissue_threshold_scale: float = 1.0
 
 
 @dataclass
@@ -183,6 +187,7 @@ def load(path: str | Path) -> Config:
             gc_channel=str(images["gc_channel"]),
             tissue_channels={str(k): float(v) for k, v in images["tissue_channels"].items()},
             min_gc_px=int(images.get("min_gc_px", 30)),
+            tissue_threshold_scale=float(images.get("tissue_threshold_scale", 1.0)),
             filename_template=str(images.get("filename_template", "Section{index}_stitched.czi")),
         ),
         st_scaffold=STScaffold(

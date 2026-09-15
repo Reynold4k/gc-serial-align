@@ -1,0 +1,61 @@
+# Second biological replicate of the same experiment. Same cutting scheme as
+# rep1, different block, different chips, and a different GC cluster number in
+# its own clustering - which is exactly the kind of thing the config exists for.
+
+name: rep2_mouse_spleen
+output_dir: /data/scratch/projects/punim1236/AAA_Chen_is_here/A_9切片对齐/rep2
+
+section_thickness_um: 10.0
+sections:
+  - {index: 1, kind: IF, source: 1}
+  - {index: 2, kind: ST, source: B06286A4, name: A4}
+  - {index: 3, kind: IF, source: 3}
+  - {index: 4, kind: ST, source: B06286C1, name: C1}
+  - {index: 5, kind: IF, source: 5}
+  - {index: 6, kind: ST, source: B06286C4, name: C4}
+  - {index: 7, kind: IF, source: 7}
+  - {index: 8, kind: ST, source: B06286C5, name: C5}
+  - {index: 9, kind: IF, source: 9}
+
+if_images:
+  dir: /data/projects/punim1236/Stereoseqv1.3_IF_images/260818_Stereoseqv1.3_SP_exp2
+  filename_template: "Section{index}_stitched.czi"
+  um_per_px: 0.8286425781249999
+  channels:
+    0: IgD_AF647
+    1: CD4_AF594
+    2: GL7_AF488
+    3: DAPI
+  gc_channel: GL7_AF488
+  tissue_channels:
+    CD4_AF594: 1.0
+    IgD_AF647: 0.6
+    GL7_AF488: 0.3
+  min_gc_px: 30
+  # Section 7 has a staining/illumination gradient: its lower-right quadrant is
+  # much dimmer, and a plain Otsu threshold drops it along with ~10 GCs. 0.6
+  # recovers the real tissue outline (25.5 -> 30.4 mm^2, against ~34.5 mm^2 of ST).
+  tissue_threshold_scale: 0.6
+
+st_scaffold:
+  h5ad: /data/scratch/projects/punim1236/AAA_Chen_is_here/A_v13双重实验/03isotype分析/新版本rep2/04新版本合并GC/全局_bin20对齐/v4_GC排序修正/four_slice_gc_matching_alignment_v4.h5ad
+  coord_key: align_deformable
+  slice_col: slice_name          # rep2 labels sections with the full chip id
+  gc_id_col: gc_match_curated_final_id
+  cluster_col: leiden_merged
+  dnb_um: 0.5
+
+align:
+  grid_um: 10.0
+
+columns:
+  target_faces: 700
+  shell_faces: 300
+
+viewer:
+  title: Nine-slice GC columns
+  subtitle: "rep2 · 9 × 10 µm"
+  st_hex: "#FF4500"              # leiden_merged cluster 6 = GC in rep2's clustering
+  if_hex: "#0F52BA"
+  default_z_exaggeration: 5
+  filename: gc_columns_rep2.html

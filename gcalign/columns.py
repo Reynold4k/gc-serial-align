@@ -107,6 +107,12 @@ def build_column(cfg, volume: np.ndarray, x0: float, y0: float, z0: float):
     mesh = pv.PolyData(xyz, np.hstack([np.full((len(faces), 1), 3), faces]).astype(np.int64))
     if mesh.n_faces_strict > cfg.columns.target_faces:
         mesh = mesh.decimate(1 - cfg.columns.target_faces / mesh.n_faces_strict, volume_preservation=True)
+    if mesh.n_open_edges:
+        # decimation very occasionally leaves a few-triangle crack; close it so
+        # the watertight guarantee holds for every column, not almost every one
+        patched = mesh.fill_holes(200.0).clean().triangulate()
+        if patched.n_faces_strict >= 8 and patched.n_open_edges < mesh.n_open_edges:
+            mesh = patched
     cells = np.asarray(mesh.faces).reshape(-1, 4)[:, 1:]
     if len(cells) < 8:
         return None
