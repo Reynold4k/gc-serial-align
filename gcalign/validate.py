@@ -161,7 +161,8 @@ def run(cfg: Config) -> None:
                 "two_sided_disagreement_um": (
                     round(v["two_sided_disagreement"]["median_um"], 1)
                     if v["two_sided_disagreement"] else None),
-                "if_only_objects": v["n_if_only"]}
+                "if_only_objects": v["n_if_only"],
+                "objects_split_on_st_evidence": v.get("objects_split_on_st_evidence", [])}
             for k, v in match.items() if k.startswith("IF")
         },
         "stage_C_identity": {
@@ -230,6 +231,13 @@ def run(cfg: Config) -> None:
         print(f"   {key}: {value['covers_st_tissue_pct']:>5.1f}%  "
               f"(misses {value['missed_mm2']:.2f} mm2){flag}")
     print(f"   covered by every IF section: {cov['st_tissue_covered_by_all_if_pct']}%")
+    splits = [(k, item) for k, v in report["stage_B_warp"].items()
+              for item in v["objects_split_on_st_evidence"]]
+    if splits:
+        print(f"IF objects split because two Stereo-seq GCs claimed them ({len(splits)}):")
+        for section, item in splits:
+            print(f"   {section}: {item['object_px']} px -> "
+                  + ", ".join(f"{g} {n} px" for g, n in item["split_into"].items()))
     print(json.dumps({k: report[k] for k in
                       ["stage_C_identity", "stage_D_columns"]}, indent=2, ensure_ascii=False))
     print(f"\nhashed {len(lines)} deliverables")
