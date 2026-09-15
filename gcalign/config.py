@@ -60,6 +60,13 @@ class Align:
     close_match_um: float = 150.0
     tps_smoothing_grid: list[float] = field(
         default_factory=lambda: [1e2, 1e3, 3e3, 1e4, 3e4, 1e5, 3e5, 1e6, 3e6])
+    # Two neighbouring GCs that touch on one IF section come through the
+    # connected-component step as a single object, and then only one of them can
+    # be matched. Split such an object using the flanking Stereo-seq regions as
+    # markers - they say how many structures are really there and where.
+    split_touching_gcs: bool = True
+    split_min_frac: float = 0.06      # each claimant must cover this much of the object
+    split_min_px: int = 30            # and at least this many pixels
 
 
 @dataclass

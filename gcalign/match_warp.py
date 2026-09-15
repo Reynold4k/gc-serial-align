@@ -18,6 +18,7 @@ import pandas as pd
 from scipy import ndimage as ndi
 from scipy.interpolate import RBFInterpolator
 from scipy.optimize import linear_sum_assignment
+from skimage.segmentation import watershed
 
 from .config import Config, stage_dir
 
@@ -27,6 +28,86 @@ def match_pairs(src, dst, radius):
     rows, cols = linear_sum_assignment(np.where(blocked, radius * 10, cost))
     keep = ~blocked[rows, cols]
     return rows[keep], cols[keep], cost[rows[keep], cols[keep]]
+
+
+def st_on_if_grid(cfg, st_map, linear, offset, shape, grid):
+    """Look up a world-space Stereo-seq label map at every IF pixel."""
+    x0, y0, height, width = grid
+    rows, cols = np.indices(shape)
+    local = np.stack([cols * cfg.grid_um, rows * cfg.grid_um], axis=-1)
+    world = local @ np.asarray(linear).T + np.asarray(offset)
+    c = np.rint((world[..., 0] - x0) / cfg.grid_um).astype(int)
+    r = np.rint((world[..., 1] - y0) / cfg.grid_um).astype(int)
+    ok = (r >= 0) & (r < height) & (c >= 0) & (c < width)
+    out = np.zeros(shape, np.int32)
+    out[ok] = st_map[r[ok], c[ok]]
+    return out
+
+
+def split_touching(cfg, gc_mask, st_views):
+    """Split IF objects that two or more Stereo-seq GCs sit under.
+
+    The Stereo-seq side is the evidence for *how many* structures are present;
+    a watershed seeded on those regions decides where the boundary goes. Only
+    objects with two well-supported claimants are touched, so a genuinely
+    single, elongated GC is left alone.
+    """
+    labels, count = ndi.label(gc_mask)
+    if not cfg.align.split_touching_gcs or count == 0 or not st_views:
+        return labels, count, []
+
+    objects = ndi.find_objects(labels)
+    out = np.zeros_like(labels)
+    next_label = 0
+    report = []
+    for index in range(1, count + 1):
+        box = objects[index - 1]
+        obj = labels[box] == index
+        size = int(obj.sum())
+
+        claims = {}
+        for view in st_views:                      # one per flanking ST section
+            sub = view[box]
+            for gid, n in zip(*np.unique(sub[obj], return_counts=True)):
+                if gid > 0:
+                    claims[int(gid)] = max(claims.get(int(gid), 0), int(n))
+        strong = sorted((g for g, n in claims.items()
+                         if n >= cfg.align.split_min_px
+                         and n >= cfg.align.split_min_frac * size),
+                        key=lambda g: -claims[g])
+
+        if len(strong) < 2:
+            next_label += 1
+            out[box][obj] = next_label
+            continue
+
+        markers = np.zeros(obj.shape, np.int32)
+        for rank, gid in enumerate(strong, start=1):
+            seed = np.zeros(obj.shape, bool)
+            for view in st_views:
+                seed |= (view[box] == gid)
+            seed &= obj
+            if seed.any():
+                markers[seed] = rank
+        if markers.max() < 2:
+            next_label += 1
+            out[box][obj] = next_label
+            continue
+
+        distance = ndi.distance_transform_edt(obj)
+        pieces = watershed(-distance, markers, mask=obj)
+        sizes = []
+        for rank, gid in enumerate(strong, start=1):
+            piece = pieces == rank
+            if not piece.any():
+                continue
+            next_label += 1
+            out[box][piece] = next_label
+            sizes.append((gid, int(piece.sum())))
+        report.append({"object_px": size,
+                       "claimants": {f"GC{g}": claims[g] for g in strong},
+                       "split_into": {f"GC{g}": n for g, n in sizes}})
+    return out, next_label, report
 
 
 def fit_tps(src, dst, smoothing):
@@ -132,7 +213,14 @@ def run(cfg: Config) -> None:
         offset = np.array(entry["offset"])
         data = np.load(cfg.output_dir / f"01_if_gc/IF{section}_gc.npz")
         gc = data["gc"]
-        labels, n_obj = ndi.label(gc)
+        st_views = [st_on_if_grid(cfg, plane_labels[n], linear, offset, gc.shape, grid)
+                    for n in NEIGHBOURS[section]]
+        labels, n_obj, split_report = split_touching(cfg, gc, st_views)
+        for item in split_report:
+            print(f"{key}: split a {item['object_px']} px object claimed by "
+                  + " and ".join(f"{g} ({n} px)" for g, n in item["claimants"].items())
+                  + " -> " + ", ".join(f"{g} {n} px" for g, n in item["split_into"].items()),
+                  flush=True)
         centroids_local = np.array([[c * GRID_UM, r * GRID_UM] for r, c in
                                     ndi.center_of_mass(gc, labels, np.arange(1, n_obj + 1))])
         centroids_world = centroids_local @ linear.T + offset
@@ -215,6 +303,7 @@ def run(cfg: Config) -> None:
 
         report[key] = {
             "n_if_objects": int(n_obj),
+            "objects_split_on_st_evidence": split_report,
             "n_anchor_pairs": int(len(src)),
             "n_if_only": len(unmatched),
             "tps_smoothing": float(smoothing),

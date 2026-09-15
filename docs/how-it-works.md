@@ -118,3 +118,25 @@ is not there. A quick way to tell the two apart: sweep the threshold down and wa
 number of detected GC objects. If coverage rises while the GC count stays flat, the extra
 area is empty and the missing GCs are a sectioning or imaging limitation, not a
 thresholding one. That is exactly what we saw — coverage 75% to 83%, GC count 278 to 277.
+
+## Two GCs that touch on one section
+
+Connected components cannot separate two germinal centres that happen to touch on a
+particular section: they arrive as one object, and the 1-to-1 matching can then only
+claim one of them. The other looks like it vanished on that plane, and the survivor looks
+like it suddenly grew a second lobe. Both readings are wrong, and both look like biology.
+
+The fix uses the side we trust. The flanking Stereo-seq sections already know how many
+structures are there and roughly where, so an IF object is split when two or more
+Stereo-seq GCs each claim a meaningful share of it (defaults: at least 6% of the object
+and at least 30 pixels). The split itself is a watershed on the object's distance
+transform, seeded with those Stereo-seq regions.
+
+Only objects with two well-supported claimants are touched, so a single elongated GC is
+never cut in half — there would only be one seed. Across our two replicates this fired
+three times in total, and `validation_report.json` records every one of them under
+`objects_split_on_st_evidence`, with the pixel counts before and after.
+
+It is worth knowing how this failure presents, because it is easy to over-interpret: in
+our data one GC appeared to bifurcate at a single z level and another appeared to
+disappear for one section. Both were the same merged object.
