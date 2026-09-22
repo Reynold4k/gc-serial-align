@@ -42,7 +42,7 @@ if_images:
 
 # --- the already-registered spatial transcriptomics -------------------------
 st_scaffold:
-  h5ad: /data/scratch/projects/punim1236/AAA_Chen_is_here/A_v13简单QC/04isotype分析/新版本/04新版本合并GC/全局_bin20对齐/v4_GC排序修正/four_slice_gc_matching_alignment_v4.h5ad
+  h5ad: /path/to/stereoseq_qc/04_isotype_analysis/new_version/merged_gc/global_bin20_alignment/v4_gc_size_ranked/four_slice_gc_matching_alignment_v4.h5ad
   coord_key: align_deformable    # obsm key holding the registered coordinates
   slice_col: slice_short         # obs column naming each section
   gc_id_col: gc_match_curated_final_id

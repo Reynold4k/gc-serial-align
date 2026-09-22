@@ -3,7 +3,7 @@
 # its own clustering - which is exactly the kind of thing the config exists for.
 
 name: rep2_mouse_spleen
-output_dir: /data/scratch/projects/punim1236/AAA_Chen_is_here/A_9切片对齐/rep2
+output_dir: /path/to/nine_section_output/rep2
 
 section_thickness_um: 10.0
 sections:
@@ -38,7 +38,7 @@ if_images:
   tissue_threshold_scale: 0.6
 
 st_scaffold:
-  h5ad: /data/scratch/projects/punim1236/AAA_Chen_is_here/A_v13双重实验/03isotype分析/新版本rep2/04新版本合并GC/全局_bin20对齐/v4_GC排序修正/four_slice_gc_matching_alignment_v4.h5ad
+  h5ad: /path/to/dual_experiment/03_isotype_analysis/new_version_rep2/merged_gc/global_bin20_alignment/v4_gc_size_ranked/four_slice_gc_matching_alignment_v4.h5ad
   coord_key: align_deformable
   slice_col: slice_name          # rep2 labels sections with the full chip id
   gc_id_col: gc_match_curated_final_id
