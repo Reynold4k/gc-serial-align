@@ -108,6 +108,39 @@ def run(cfg: Config) -> None:
     col_payload = merge("v", "f")
     shell_payload = merge("sv", "sf")
 
+    # ---- optional DZ / LZ blocks: one green and one white solid per GC -----
+    # Built by build_zone_blocks.py, which partitions each GC rather than
+    # thresholding the two zones independently, so the pair tiles the structure.
+    # Quantised against the *column* bounds so both views share one coordinate
+    # frame; the blocks are carved out of the same masks, so nothing clips.
+    zone_blocks = None
+    zb_file = cfg.output_dir / "04_columns/zone_blocks.npz"
+    if zb_file.exists():
+        zb = np.load(zb_file)
+        zb_ids = [int(v) for v in zb["gc_ids"]]
+
+        def merge_zone(cls: str) -> dict:
+            verts, faces, owner, cursor = [], [], [], 0
+            for gid in zb_ids:
+                v = zb[f"{cls}_v{gid}"].astype(np.float64)
+                verts.append(v)
+                faces.append(zb[f"{cls}_f{gid}"] + cursor)
+                owner.append(np.full(len(v), gid, np.int32))
+                cursor += len(v)
+            v = np.concatenate(verts); f = np.concatenate(faces); o = np.concatenate(owner)
+            out_of_frame = int((v < lo).any(axis=1).sum() + (v > hi).any(axis=1).sum())
+            return {"n": int(len(v)), "nf": int(len(f)),
+                    "xyz": b64(quantise(v), "<u2"),
+                    "f": b64(f, "<u4" if len(v) > 65535 else "<u2"),
+                    "fBytes": 4 if len(v) > 65535 else 2,
+                    "owner": b64(o, "<u2"), "clipped": out_of_frame}
+
+        zone_blocks = {"DZ": merge_zone("DZ"), "LZ": merge_zone("LZ"), "ids": zb_ids}
+        print(f"  DZ/LZ blocks: {len(zb_ids)} GCs, "
+              f"{zone_blocks['DZ']['nf'] + zone_blocks['LZ']['nf']:,} faces, "
+              f"{zone_blocks['DZ']['clipped'] + zone_blocks['LZ']['clipped']} vertices clipped "
+              "to the column frame")
+
     # ---- plane patches, merged per plane with a per-vertex GC id ------------
     def extrude(xy: np.ndarray, cap: np.ndarray, z: float):
         """Thin prism: bottom cap, top cap, and a wall around the ordered ring."""
@@ -155,6 +188,66 @@ def run(cfg: Config) -> None:
             "owner": b64(owner, "<u2"),
         })
 
+    # ---- optional B-follicle backdrop -------------------------------------
+    # IF planes carry IgD (mantle/follicle, naturally low inside the GC); the
+    # Stereo-seq planes carry the RCTD follicular-B call. Points, not meshes:
+    # this layer exists to set the GC off, not to be measured.
+    follicle_payload = []
+    foll_file = cfg.output_dir / "05_viewer/follicle_points.npz"
+    if foll_file.exists():
+        foll = np.load(foll_file)
+        for name, kind, section in PLANES:
+            if name not in foll:
+                continue
+            pts = foll[name].astype(np.float32)
+            follicle_payload.append({
+                "name": name, "kind": kind, "section": section,
+                "z": (section - 1) * Z_STEP_UM, "n": int(len(pts)),
+                "x": b64(pts[:, 0].astype("<f4"), "<f4"),
+                "y": b64(pts[:, 1].astype("<f4"), "<f4"),
+            })
+        print(f"  follicle backdrop: {len(follicle_payload)} planes, "
+              f"{sum(p['n'] for p in follicle_payload):,} points")
+
+    # ---- optional dark-zone / light-zone layer ------------------------------
+    # ST planes: RCTD DZ/LZ. IF planes: the GC split on CD4 at its own median,
+    # validated against RCTD on the neighbouring sections (73% rep1, 83% rep2).
+    dzlz_payload = []
+    dz_file = cfg.output_dir / "05_viewer/dzlz_points.npz"
+    if dz_file.exists():
+        dz = np.load(dz_file)
+        for name, kind, section in PLANES:
+            entry = {"name": name, "kind": kind, "section": section,
+                     "z": (section - 1) * Z_STEP_UM}
+            found = False
+            for cls in ("DZ", "LZ"):
+                key = f"{name}|{cls}"
+                if key not in dz:
+                    continue
+                pts = dz[key].astype(np.float32)
+                block = {"n": int(len(pts)),
+                         "x": b64(pts[:, 0].astype("<f4"), "<f4"),
+                         "y": b64(pts[:, 1].astype("<f4"), "<f4")}
+                gkey = f"{key}|gc"
+                if gkey in dz:
+                    # the curated GC id per point, so selecting a GC filters the
+                    # cloud the same way it filters the blocks
+                    block["gc"] = b64(dz[gkey].astype("<u2"), "<u2")
+                entry[cls] = block
+                found = True
+            if found:
+                dzlz_payload.append(entry)
+        print(f"  dark/light zone: {len(dzlz_payload)} planes, "
+              f"{sum(e.get(c, {}).get('n', 0) for e in dzlz_payload for c in ('DZ', 'LZ')):,} points")
+
+    # ---- optional full-resolution IF photographs for the side panel ---------
+    if_images = None
+    img_file = cfg.output_dir / "05_viewer/if_images.json"
+    if img_file.exists():
+        if_images = json.loads(img_file.read_text())
+        mb = img_file.stat().st_size / 1e6
+        print(f"  IF photographs: {len(if_images['planes'])} planes, {mb:.2f} MB")
+
     identity = v4_palette(sorted(gc_ids))
     st_colours = hue_family(sorted(gc_ids), LEIDEN_GC_HEX, 0.085, (0.62, 1.0), (0.74, 1.0))
     if_colours = hue_family(sorted(gc_ids), SAPPHIRE_HEX, 0.075, (0.58, 0.98), (0.62, 1.0))
@@ -171,6 +264,8 @@ def run(cfg: Config) -> None:
     payload = {
         "lo": lo.tolist(), "span": span.tolist(),
         "columns": col_payload, "shell": shell_payload, "planes": plane_payload,
+        "follicle": follicle_payload, "dzlz": dzlz_payload, "ifImages": if_images,
+        "zoneBlocks": zone_blocks,
         "ids": sorted(gc_ids),
         "identity": identity, "stColours": st_colours, "ifColours": if_colours,
         "info": info,

@@ -244,10 +244,29 @@ Stages can be run separately with `--from`, `--to` or `--only` (see `gcalign sta
 
 <p align="center"><img src="docs/img/viewer_gc.jpg" width="100%"></p>
 
-Four views (keys `1`–`4`): the GC columns on their own; the ST sections; the IF sections;
-and both stacked together, alternating by modality. Click a section name to light it up
-and dim the rest; click a GC to isolate it. The Z slider exaggerates depth — real scale is
-1×, which for a 80 µm stack across 7 mm of tissue is almost flat, so it defaults to 5×.
+Five views (keys `1`–`5`): the GC columns on their own; the ST sections; the IF sections;
+both stacked together, alternating by modality; and the dark-zone / light-zone view. Click a
+section name to light it up and dim the rest; click a GC to isolate it — every layer filters
+with it. The Z slider exaggerates depth: real scale is 1×, which for an 80 µm stack across
+7 mm of tissue is almost flat, so it defaults to 5×.
+
+Three optional layers appear only if their input file exists, so a plain registration run
+still opens with nothing missing:
+
+- a **B-follicle backdrop** (`follicle_points.npz`) — IgD on the IF planes, the RCTD
+  follicular-B call on the Stereo-seq planes, both in one pale blue so it reads as one
+  structure. A GC column floating in empty space cannot be judged: you cannot tell whether a
+  shift between sections is the GC moving or the registration drifting.
+- the **DZ / LZ view** (`dzlz_points.npz`, `zone_blocks.npz`) — the measured points on all
+  nine planes, or each GC re-cut into one solid dark-zone and one solid light-zone block,
+  switched from the sidebar. They are two readings of the same measurement, which is why they
+  share a view instead of stacking.
+- an **IF photograph panel** (`if_images.json`) — the full-resolution section as a
+  true-colour image with the GC outlines and ids over it; scroll to zoom, drag to pan, Esc to
+  close.
+
+Builders for all three are in [`viewer_layers/`](viewer_layers), with the flat per-GC
+close-ups in [`figures_2d/`](figures_2d).
 
 Download the file and open it locally. If dragging feels sluggish it is almost always
 because the browser has fallen back to software rendering — check `chrome://gpu`; viewing

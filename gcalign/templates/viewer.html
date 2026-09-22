@@ -34,12 +34,22 @@ body{
 .lab em{font-style:normal;text-transform:none;letter-spacing:0;color:#55647f}
 
 .views{display:grid;grid-template-columns:repeat(2,1fr);gap:5px}
+.views button#blocksBtn{grid-column:1/-1}
+.zmode{display:grid;grid-template-columns:repeat(2,1fr);gap:5px;margin-top:4px}
+.zmode button{appearance:none;border:1px solid var(--line);background:var(--panel-2);
+  color:var(--ink-2);font:inherit;font-size:11px;padding:5px 0;border-radius:5px;cursor:pointer}
+.zmode button:hover{border-color:#31456e;color:var(--ink)}
+.zmode button[data-on="1"]{background:#16243f;color:#fff;border-color:var(--sapphire)}
+.views button#blocksBtn[hidden]{display:none}   /* an author display would beat [hidden] */
 .views button{appearance:none;border:1px solid var(--line);background:var(--panel-2);color:var(--ink-2);
   padding:9px 4px;border-radius:3px;cursor:pointer;font-size:12.5px;font-weight:500;
   transition:background .14s,color .14s,border-color .14s}
 .views button:hover{border-color:#31456e;color:var(--ink)}
 .views button[data-on="1"]{background:#16243f;color:#fff;border-color:var(--sapphire)}
 .views button[data-on="1"][data-kind="st"]{border-color:var(--magenta)}
+/* too small to split into two blocks - dimmed so the click is not wasted */
+.row[data-noblock="1"]{opacity:.32}
+.row[data-noblock="1"] .meta::after{content:' · no block';color:#7e8ba6}
 
 .chips{display:flex;flex-wrap:wrap;gap:5px}
 .chips button{appearance:none;border:1px solid var(--line);background:transparent;color:var(--ink-2);
@@ -81,6 +91,29 @@ body{
 #badge{position:absolute;left:16px;top:14px;z-index:5;pointer-events:none;
        font-size:11px;color:var(--muted);letter-spacing:.05em}
 #badge b{color:var(--ink-2);font-weight:500}
+
+#ifPanel{position:fixed;top:0;right:0;width:min(58vw,880px);height:100vh;z-index:40;
+  background:#05070d;border-left:1px solid #1c2740;display:flex;flex-direction:column;
+  box-shadow:-18px 0 48px rgba(0,0,0,.65)}
+/* an author `display` beats the UA rule for [hidden], so say it explicitly or the
+   panel can never be closed - and would be open on load */
+#ifPanel[hidden]{display:none}
+#ifBar{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #1c2740;flex:none}
+#ifBar b{font-size:13px;letter-spacing:.02em}
+#ifChips{display:flex;gap:4px}
+#ifChips button{background:#0a0f1c;border:1px solid #1c2740;color:#aebbd6;font:inherit;font-size:11px;
+  padding:3px 9px;border-radius:3px;cursor:pointer}
+#ifChips button[data-on="1"]{background:#9dc6ff;border-color:#9dc6ff;color:#06121f}
+.ifbtn{background:#0a0f1c;border:1px solid #1c2740;color:#aebbd6;font:inherit;font-size:11px;
+  padding:3px 9px;border-radius:3px;cursor:pointer}
+.ifbtn:hover{border-color:#9dc6ff;color:#e6ecfa}
+.ifbtn[aria-pressed="true"]{background:#16304d;color:#e6ecfa}
+#ifStage{flex:1;overflow:hidden;position:relative;background:#000;cursor:grab}
+#ifStage.drag{cursor:grabbing}
+#ifWrap{position:absolute;transform-origin:0 0;left:0;top:0}
+#ifWrap img{display:block;image-rendering:auto}
+#ifWrap svg{position:absolute;left:0;top:0;pointer-events:none;overflow:visible}
+#ifFoot{padding:8px 12px;border-top:1px solid #1c2740;font-size:10.5px;color:#67748f;flex:none;line-height:1.6}
 </style>
 </head>
 <body>
@@ -98,6 +131,7 @@ body{
         <button data-view="st" data-kind="st">ST</button>
         <button data-view="if">IF</button>
         <button data-view="both">ST + IF</button>
+        <button data-view="blocks" id="blocksBtn" hidden>DZ / LZ</button>
       </div>
     </div>
 
@@ -119,6 +153,37 @@ body{
           <span class="val mono" id="opv">0.11</span>
         </div>
       </div>
+      <div id="follBlock" hidden>
+        <div class="lab" style="margin-top:12px">B follicle backdrop</div>
+        <button id="foll" class="chip" type="button" aria-pressed="false"
+                style="width:100%;margin-top:4px">Off</button>
+        <div class="lab" style="margin:6px 0 0;font-size:9px;letter-spacing:.05em;line-height:1.5">
+          IgD on IF sections · RCTD follicular B on Stereo-seq sections
+        </div>
+      </div>
+      <div id="ifPhotoBlock" hidden>
+        <div class="lab" style="margin-top:12px">IF photograph</div>
+        <button id="ifOpen" class="chip" type="button" style="width:100%;margin-top:4px">Open</button>
+        <div class="lab" style="margin:6px 0 0;font-size:9px;letter-spacing:.05em;line-height:1.5">
+          full-resolution section, GC outlines and ids
+        </div>
+      </div>
+      <div id="zbBlock" hidden>
+        <div class="lab" style="margin-top:12px">DZ / LZ representation</div>
+        <div class="zmode" id="zmode">
+          <button data-zmode="solid" data-on="1">Smoothed</button>
+          <button data-zmode="points">Points</button>
+        </div>
+        <div class="lab" style="margin:6px 0 0;font-size:9px;letter-spacing:.05em;line-height:1.55">
+          green dark zone &middot; white light zone, one solid each per GC.
+          green dark zone &middot; white light zone.
+          <b>Points</b> are the measurement itself, inside the GC region on all nine
+          sections &mdash; RCTD on Stereo-seq, CD4 split on IF.
+          <b>Smoothed</b> cuts each GC into one solid of each zone from the same
+          field, blurred across all nine planes together and split at that
+          GC&rsquo;s own light-zone fraction, so the pair tiles the GC.
+        </div>
+      </div>
     </div>
 
     <div class="block" style="padding-bottom:10px">
@@ -133,6 +198,26 @@ body{
   <main id="plot"><div id="badge"></div></main>
 </div>
 
+
+<div id="ifPanel" hidden>
+  <div id="ifBar">
+    <b id="ifTitle">IF</b>
+    <span id="ifChips"></span>
+    <span style="flex:1"></span>
+    <button class="ifbtn" id="ifOut" aria-pressed="true">Outlines</button>
+    <button class="ifbtn" id="ifFit">Fit</button>
+    <button class="ifbtn" id="ifClose">&times;</button>
+  </div>
+  <div id="ifStage">
+    <div id="ifWrap">
+      <img id="ifImg" alt="Immunofluorescence section">
+      <svg id="ifSvg" xmlns="http://www.w3.org/2000/svg"></svg>
+    </div>
+  </div>
+  <div id="ifFoot">R = CD4 (AF594) &middot; G = GL7 (AF488) &middot; B = IgD (AF647)
+       &middot; full resolution, shared contrast limits across the five sections
+       &middot; scroll to zoom, drag to pan</div>
+</div>
 <script>__PLOTLYJS__</script>
 <script>
 const DATA = __PAYLOAD__;
@@ -177,6 +262,54 @@ const COL = withOwners(DATA.columns);
 const SHELL = withOwners(DATA.shell);
 const PLANES = DATA.planes.map(p => ({name: p.name, kind: p.kind, z: p.z, ...withOwners(p)}));
 const COL_TRACE = 0, SHELL_TRACE = 1, PLANE0 = 2;
+/* B-follicle backdrop: IgD on the IF planes, RCTD follicular B on the ST planes.
+   Points rather than meshes - it exists to set the GC off, not to be measured. */
+function f32(b64, n){ return new Float32Array(raw(b64).buffer, 0, n); }
+const FOLL = (DATA.follicle || []).map(p => ({
+  name: p.name, kind: p.kind, z: p.z, n: p.n,
+  x: f32(p.x, p.n), y: f32(p.y, p.n),
+  zs: new Float32Array(p.n).fill(p.z)
+}));
+const FOLL0 = PLANE0 + DATA.planes.length;
+/* dark zone / light zone. ST planes carry RCTD; IF planes carry the CD4 split
+   inside each registered GC, validated against RCTD on the neighbours. */
+const ZONE_COLOUR = {DZ: '#2ECC40', LZ: '#FFFFFF'};
+const ZONES = [];
+(DATA.dzlz || []).forEach(p => {
+  ['DZ', 'LZ'].forEach(cls => {
+    if (!p[cls]) return;
+    const b = p[cls];
+    ZONES.push({name: p.name, kind: p.kind, cls: cls, z: p.z, n: b.n,
+                x: f32(b.x, b.n), y: f32(b.y, b.n),
+                zs: new Float32Array(b.n).fill(p.z),
+                gc: b.gc ? new Uint16Array(raw(b.gc).buffer, 0, b.n) : null});
+  });
+});
+/* the measured points and the solids are two readings of the same thing, so they
+   live in one view and the sidebar switches between them rather than stacking a
+   point cloud behind nine opaque section slabs, where it was invisible */
+function zonePoints(zn, gc){
+  if (gc === null || !zn.gc) return {x: zn.x, y: zn.y, z: zn.zs};
+  let n = 0;
+  for (let i = 0; i < zn.n; i++) if (zn.gc[i] === gc) n++;
+  const x = new Float32Array(n), y = new Float32Array(n), z = new Float32Array(n);
+  let w = 0;
+  for (let i = 0; i < zn.n; i++){
+    if (zn.gc[i] !== gc) continue;
+    x[w] = zn.x[i]; y[w] = zn.y[i]; z[w] = zn.zs[i]; w++;
+  }
+  return {x, y, z};
+}
+const ZONE0 = FOLL0 + FOLL.length;
+/* The same two zones as solids: one green dark-zone block and one white
+   light-zone block per GC, carved so the pair tiles the curated region rather
+   than being thresholded independently. Two merged meshes, not two per GC. */
+const ZB = DATA.zoneBlocks
+  ? {DZ: withOwners(DATA.zoneBlocks.DZ), LZ: withOwners(DATA.zoneBlocks.LZ),
+     ids: new Set(DATA.zoneBlocks.ids)}
+  : null;
+const ZB0 = ZONE0 + ZONES.length;
+const ZB_CLS = ['DZ', 'LZ'];
 
 function facesFor(mesh, gc){
   if (gc === null) return {i: mesh.i, j: mesh.j, k: mesh.k};
@@ -213,10 +346,13 @@ function tint(mesh, palette, flat){
 }
 
 /* ---------- state ---------- */
-const S = {view: 'columns', slice: null, gc: null, zScale: __ZDEFAULT__, envelope: 0.11};
+const S = {view: 'columns', slice: null, gc: null, zScale: __ZDEFAULT__, envelope: 0.11,
+           follicle: false, zoneMode: 'solid'};   /* 'solid' | 'points' */
 const GLASS = {st: '#ff9ed2', if: '#9dc6ff', both: '#cdb6ec'};
+/* one pale blue for both modalities so the backdrop reads as one structure */
+const FOLL_COLOUR = {ST: '#9ECBFF', IF: '#9ECBFF'};
 /* which sections each view draws, in true physical order */
-const KINDS = {columns: [], st: ['ST'], if: ['IF'], both: ['ST', 'IF']};
+const KINDS = {columns: [], blocks: [], st: ['ST'], if: ['IF'], both: ['ST', 'IF']};
 const paletteFor = v => v === 'st' ? DATA.stColours : v === 'if' ? DATA.ifColours : DATA.identity;
 /* in the combined view every section keeps its own family, so the stack reads
    blue, pink, blue, pink down the z axis */
@@ -317,18 +453,56 @@ function buildTraces(){
       lighting: slab, lightposition: light
     });
   }
+  for (const f of FOLL){
+    out.push({
+      type: 'scatter3d', mode: 'markers',
+      x: f.x, y: f.y, z: f.zs,
+      marker: {size: 1, color: FOLL_COLOUR[f.kind], opacity: 0.34},
+      name: 'follicle ' + f.name, visible: false,
+      hovertemplate: (f.kind === 'IF' ? 'B follicle · IgD' : 'B follicle · RCTD') +
+                     ' · ' + f.name + '<extra></extra>'
+    });
+  }
+  for (const zn of ZONES){
+    out.push({
+      type: 'scatter3d', mode: 'markers',
+      x: zn.x, y: zn.y, z: zn.zs,
+      marker: {size: 1, color: ZONE_COLOUR[zn.cls], opacity: 0.85},
+      name: zn.cls + ' ' + zn.name, visible: false,
+      hovertemplate: zn.cls + ' · ' + zn.name + ' · ' +
+                     (zn.kind === 'IF' ? 'CD4 split' : 'RCTD') + '<extra></extra>'
+    });
+  }
+  if (ZB){
+    /* white on near-black blows out under the column lighting, so the light
+       zone gets the softer of the two materials */
+    const mat = {DZ: {ambient: 0.40, diffuse: 0.86, specular: 0.55, roughness: 0.30, fresnel: 0.9},
+                 LZ: {ambient: 0.46, diffuse: 0.70, specular: 0.22, roughness: 0.55, fresnel: 0.6}};
+    for (const cls of ZB_CLS){
+      const m = ZB[cls];
+      out.push({
+        type: 'mesh3d', x: m.x, y: m.y, z: m.z, i: m.i, j: m.j, k: m.k,
+        color: ZONE_COLOUR[cls], opacity: 1, flatshading: false,
+        text: hoverText(m, cls === 'DZ' ? 'Dark zone' : 'Light zone'),
+        hoverinfo: 'text', hovertemplate: '%{text}<extra></extra>',
+        name: cls + ' block', showscale: false, visible: false,
+        lighting: mat[cls], lightposition: light
+      });
+    }
+  }
   return out;
 }
 
 /* ---------- render ---------- */
 function render(reLayout){
   const pal = paletteFor(S.view);
-  const showPlanes = S.view !== 'columns';
+  const blocks = S.view === 'blocks';
+  const showPlanes = S.view !== 'columns' && !blocks;
   const kinds = KINDS[S.view];
 
   const colFaces = facesFor(COL, S.gc);
   Plotly.restyle('plot', {
-    visible: [!showPlanes],
+    visible: [S.view === 'columns'],
     vertexcolor: [tint(COL, pal)],
     opacity: [1],
     i: [colFaces.i], j: [colFaces.j], k: [colFaces.k]
@@ -357,12 +531,48 @@ function render(reLayout){
   Plotly.restyle('plot', {visible: vis, vertexcolor: col, opacity: opa, i: pi, j: pj, k: pk},
                  PLANES.map((_, n) => n + PLANE0));
 
+  if (FOLL.length){
+    const fv = [], fo = [];
+    FOLL.forEach(f => {
+      const on = S.follicle && showPlanes && kinds.includes(f.kind);
+      fv.push(on);
+      const focus = S.slice === null || S.slice === f.name;
+      fo.push(focus ? 0.30 : 0.05);
+    });
+    Plotly.restyle('plot', {visible: fv, 'marker.opacity': fo},
+                   FOLL.map((_, n) => n + FOLL0));
+  }
+
+  const wantPoints = blocks && S.zoneMode === 'points';
+  if (ZONES.length){
+    ZONES.forEach((zn, n) => {
+      if (!wantPoints){
+        Plotly.restyle('plot', {visible: [false]}, [n + ZONE0]);
+        return;
+      }
+      const p = zonePoints(zn, S.gc);
+      Plotly.restyle('plot', {visible: [p.x.length > 0], x: [p.x], y: [p.y], z: [p.z]},
+                     [n + ZONE0]);
+    });
+  }
+
+  if (ZB){
+    const wantSolid = blocks && S.zoneMode === 'solid';
+    ZB_CLS.forEach((cls, n) => {
+      const f = wantSolid ? facesFor(ZB[cls], S.gc) : {i: ZB[cls].i, j: ZB[cls].j, k: ZB[cls].k};
+      Plotly.restyle('plot', {visible: [wantSolid], i: [f.i], j: [f.j], k: [f.k]}, [ZB0 + n]);
+    });
+  }
+
   if (reLayout) reframe();
 
-  const names = {columns: 'Columns', st: 'Stereo-seq', if: 'IF', both: 'ST + IF'};
+  const names = {columns: 'Columns', blocks: 'DZ / LZ blocks',
+                 st: 'Stereo-seq', if: 'IF', both: 'ST + IF'};
   document.getElementById('badge').innerHTML =
     '<b>' + names[S.view] + '</b>' + (S.slice ? ' · ' + S.slice : '') +
-    (S.gc ? ' · GC' + S.gc : '') + ' · z ×' + S.zScale;
+    (S.gc ? ' · GC' + S.gc : '') + (S.follicle ? ' · follicle' : '') +
+    (S.view === 'blocks' ? ' · ' + (S.zoneMode === 'points' ? 'points' : 'smoothed') : '') +
+    ' · z ×' + S.zScale;
 }
 
 /* ---------- sidebar ---------- */
@@ -376,6 +586,7 @@ function buildList(filter){
     const row = document.createElement('div');
     row.className = 'row';
     row.dataset.gc = gid;
+    if (S.view === 'blocks' && ZB && !ZB.ids.has(gid)) row.dataset.noblock = '1';
     if (S.gc === gid) row.dataset.on = '1';
     const swatch = S.view === 'both'
       ? 'linear-gradient(90deg,' + DATA.stColours[gid] + ' 50%,' + DATA.ifColours[gid] + ' 50%)'
@@ -423,8 +634,12 @@ function setView(view){
   S.slice = null;
   document.querySelectorAll('.views button').forEach(b =>
     b.dataset.on = (b.dataset.view === view) ? '1' : '0');
-  document.getElementById('sliceBlock').hidden = (view === 'columns');
-  document.getElementById('opBlock').hidden = (view === 'columns' || view === 'both');
+  if (view === 'blocks' && ZB && S.gc !== null && !ZB.ids.has(S.gc)) S.gc = null;
+  const solid = (view === 'columns' || view === 'blocks');
+  document.getElementById('sliceBlock').hidden = solid;
+  document.getElementById('opBlock').hidden = (solid || view === 'both');
+  const zbb = document.getElementById('zbBlock');
+  if (zbb) zbb.hidden = !(ZB && view === 'blocks');
   const chips = document.getElementById('chips');
   chips.className = 'chips';
   chips.innerHTML = '';
@@ -436,10 +651,135 @@ function setView(view){
     chips.appendChild(b);
   }
   buildList(document.getElementById('search').value.trim());
+  showInfo();
+  const fb = document.getElementById('follBlock');
+  if (fb) fb.hidden = !(FOLL.length && !solid);
+  const pb = document.getElementById('ifPhotoBlock');
+  if (pb) pb.hidden = !(DATA.ifImages && ['if', 'both'].includes(view));
   render(true);
 }
 
+function syncFollicle(){
+  const b = document.getElementById('foll');
+  if (!b) return;
+  b.textContent = S.follicle ? 'On' : 'Off';
+  b.setAttribute('aria-pressed', String(S.follicle));
+  b.style.background = S.follicle ? 'var(--accent, #9ECBFF)' : '';
+  b.style.color = S.follicle ? '#06121f' : '';
+}
+
+function setZoneMode(mode){
+  S.zoneMode = mode;
+  document.querySelectorAll('#zmode button').forEach(b =>
+    b.dataset.on = (b.dataset.zmode === mode) ? '1' : '0');
+  render(false);
+}
+
+
+/* ---------- IF photograph panel ---------- */
+const IFIMG = DATA.ifImages;
+(function(){
+  if (!IFIMG || !IFIMG.planes || !IFIMG.planes.length){
+    const blk = document.getElementById('ifPanel'); if (blk) blk.remove();
+    return;
+  }
+  const panel = document.getElementById('ifPanel');
+  const stage = document.getElementById('ifStage');
+  const wrap  = document.getElementById('ifWrap');
+  const img   = document.getElementById('ifImg');
+  const svg   = document.getElementById('ifSvg');
+  const chips = document.getElementById('ifChips');
+  let cur = IFIMG.planes[0], zoom = 1, ox = 0, oy = 0, outlines = true;
+
+  function apply(){ wrap.style.transform = 'translate(' + ox + 'px,' + oy + 'px) scale(' + zoom + ')'; }
+  function fit(){
+    const sw = stage.clientWidth, sh = stage.clientHeight;
+    zoom = Math.min(sw / cur.w, sh / cur.h) * 0.96;
+    ox = (sw - cur.w * zoom) / 2; oy = (sh - cur.h * zoom) / 2;
+    apply();
+  }
+  function draw(){
+    img.src = 'data:image/jpeg;base64,' + cur.jpeg;
+    img.width = cur.w; img.height = cur.h;
+    svg.setAttribute('width', cur.w); svg.setAttribute('height', cur.h);
+    svg.setAttribute('viewBox', '0 0 ' + cur.w + ' ' + cur.h);
+    let s = '';
+    if (outlines){
+      for (const o of cur.outlines){
+        const col = (DATA.identity && DATA.identity[o.gc]) || '#ffffff';
+        s += '<polygon points="' + o.xy.map(q => q[0] + ',' + q[1]).join(' ') +
+             '" fill="none" stroke="' + col + '" stroke-width="1.1" stroke-opacity=".95"/>';
+      }
+      for (const L of cur.labels){
+        s += '<text x="' + L.x + '" y="' + L.y + '" fill="#ffffff" font-size="9" ' +
+             'text-anchor="middle" paint-order="stroke" stroke="#000" stroke-width="2.4" ' +
+             'stroke-opacity=".85">GC' + L.gc + '</text>';
+      }
+    }
+    svg.innerHTML = s;
+    document.getElementById('ifTitle').textContent = cur.plane;
+    chips.querySelectorAll('button').forEach(b =>
+      b.dataset.on = (b.dataset.plane === cur.plane) ? '1' : '0');
+  }
+  for (const p of IFIMG.planes){
+    const b = document.createElement('button');
+    b.textContent = p.plane; b.dataset.plane = p.plane;
+    b.onclick = () => { cur = p; draw(); fit(); };
+    chips.appendChild(b);
+  }
+  function close(){ panel.hidden = true; }
+  document.getElementById('ifClose').onclick = close;
+  document.getElementById('ifClose').title = 'Close (Esc)';
+  document.getElementById('ifFit').onclick = fit;
+  document.getElementById('ifOut').onclick = function(){
+    outlines = !outlines; this.setAttribute('aria-pressed', String(outlines)); draw();
+  };
+  stage.addEventListener('wheel', e => {
+    e.preventDefault();
+    const r = stage.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+    const k = e.deltaY < 0 ? 1.15 : 1 / 1.15, nz = Math.max(0.05, Math.min(zoom * k, 14));
+    ox = mx - (mx - ox) * (nz / zoom); oy = my - (my - oy) * (nz / zoom);
+    zoom = nz; apply();
+  }, {passive: false});
+  let dragging = false, px = 0, py = 0;
+  stage.addEventListener('mousedown', e => { dragging = true; px = e.clientX; py = e.clientY; stage.classList.add('drag'); });
+  window.addEventListener('mouseup', () => { dragging = false; stage.classList.remove('drag'); });
+  window.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    ox += e.clientX - px; oy += e.clientY - py; px = e.clientX; py = e.clientY; apply();
+  });
+  window.openIF = function(plane){
+    const hit = IFIMG.planes.find(p => p.plane === plane);
+    if (hit) cur = hit;
+    panel.hidden = false; draw(); requestAnimationFrame(fit);
+  };
+  window.addEventListener('keydown', e => { if (e.key === 'Escape' && !panel.hidden) close(); });
+})();
+
 /* ---------- boot ---------- */
+(function(){
+  const b = document.getElementById('foll');
+  if (!b) return;
+  if (!FOLL.length){ const blk = document.getElementById('follBlock'); if (blk) blk.remove(); return; }
+  b.onclick = () => { S.follicle = !S.follicle; syncFollicle(); render(false); };
+  syncFollicle();
+})();
+(function(){
+  const b = document.getElementById('ifOpen');
+  if (!b) return;
+  if (!DATA.ifImages){ const blk = document.getElementById('ifPhotoBlock'); if (blk) blk.remove(); return; }
+  b.onclick = () => window.openIF(
+    (S.slice && String(S.slice).startsWith('IF')) ? S.slice : DATA.ifImages.planes[0].plane);
+})();
+(function(){
+  const box = document.getElementById('zmode');
+  if (!box) return;
+  /* without a point cloud there is nothing to switch to, so the whole control
+     goes rather than sitting there as a button that does nothing */
+  if (!ZONES.length){ box.remove(); return; }
+  box.querySelectorAll('button').forEach(b =>
+    b.onclick = () => setZoneMode(b.dataset.zmode));
+})();
 document.getElementById('ncol').textContent = DATA.meta.nColumns;
 Plotly.newPlot('plot', buildTraces(), layout(),
                {responsive: true, displaylogo: false,
@@ -452,6 +792,8 @@ Plotly.newPlot('plot', buildTraces(), layout(),
       selectGC(COL.owner[pt.pointNumber] || null);
     } else if (pt.curveNumber === SHELL_TRACE){
       selectGC(SHELL.owner[pt.pointNumber] || null);
+    } else if (ZB && pt.curveNumber >= ZB0 && pt.curveNumber < ZB0 + ZB_CLS.length){
+      selectGC(ZB[ZB_CLS[pt.curveNumber - ZB0]].owner[pt.pointNumber] || null);
     } else {
       const p = PLANES[pt.curveNumber - PLANE0];
       if (!p) return;
@@ -462,6 +804,10 @@ Plotly.newPlot('plot', buildTraces(), layout(),
   });
 });
 
+(function(){
+  const b = document.getElementById('blocksBtn');
+  if (ZB) b.hidden = false; else b.remove();
+})();
 document.querySelectorAll('.views button').forEach(b =>
   b.onclick = () => setView(b.dataset.view));
 document.getElementById('zs').oninput = e => {
@@ -482,6 +828,7 @@ document.addEventListener('keydown', e => {
   if (e.key === '2') setView('st');
   if (e.key === '3') setView('if');
   if (e.key === '4') setView('both');
+  if (e.key === '5' && ZB) setView('blocks');
 });
 buildList('');
 </script>
