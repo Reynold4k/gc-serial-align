@@ -15,6 +15,22 @@ below is skipped if its input file is absent.
 | `build_rctd_four_slice.py` | a standalone four-section RCTD atlas HTML | — |
 | `finish_all.sh` | runs the above and regenerates both replicates' viewers | — |
 
+## What the layers look like
+
+<p align="center"><img src="../docs/img/follicle.jpg" width="100%"></p>
+
+The B-follicle backdrop across the nine planes — IgD on the IF planes, the RCTD
+follicular-B call on the Stereo-seq planes, drawn in one colour so it reads as a single
+structure rather than two datasets. A GC column floating in empty space cannot be judged;
+against the follicles it sits in, a shift between sections is visibly either the GC moving
+or the registration drifting.
+
+<p align="center"><img src="../docs/img/zone_blocks.jpg" width="100%"></p>
+
+`build_zone_blocks.py` re-cut each GC into one dark-zone and one light-zone solid. The two
+meshes tile the GC exactly because they are one continuous field split at a single
+threshold, not two independent thresholds.
+
 ## Paths
 
 Every script carries a `/path/to/...` placeholder where this project used a
