@@ -11,7 +11,55 @@ structure that spans several sections can be followed through the whole stack an
 reconstructed in 3D. It was built for germinal centres in mouse spleen, and it ships an
 interactive viewer that you open in a browser.
 
-<p align="center"><img src="docs/img/viewer_both.jpg" width="100%"></p>
+<table>
+<tr>
+<td width="50%"><img src="docs/img/rep1_film.gif" width="100%"></td>
+<td width="50%"><img src="docs/img/rep2_film.gif" width="100%"></td>
+</tr>
+<tr>
+<td align="center"><em><b>replicate 1</b> — 58 matched germinal centres</em></td>
+<td align="center"><em><b>replicate 2</b> — 70 matched germinal centres</em></td>
+</tr>
+</table>
+
+<p align="center"><em>Both replicates, whole run in thirteen seconds: four Stereo-seq sections
+converging, the frame lifting into the cutting axis, one immunofluorescence section being
+matched in, and the finished nine-section stack turning — blue IF alternating with pink
+Stereo-seq. Full-length films below.</em></p>
+
+---
+
+## Watch it run
+
+Both films below are rendered from the pipeline's own saved output — no registration is
+recomputed to make them, and nothing on screen is an interpolation between two endpoints.
+The Stereo-seq act replays all 1,100 stored Spateo iterations in their saved order, one
+iteration per frame; the immunofluorescence act replays the 12 stored Stage-A ICP
+iterations per section, reconstructed with this package's own functions and asserted
+identical to the transform in `global_transforms.json`.
+
+<p align="center"><img src="docs/img/gc_matching_topview.gif" width="100%"></p>
+<p align="center"><em>One section being matched in. The camera drops to a top view, the real ICP
+iterations run, and it pushes into the densest neighbourhood of germinal centres — because
+after the first three iterations the correction is tens of micrometres, which is under a
+pixel at section scale. White lines join each IF germinal centre to the Stereo-seq one it
+was paired with; the readout is the live iteration count, pair count and mean pair
+distance.</em></p>
+
+| Film | What is in it |
+|---|---|
+| [rep1 — full reconstruction](https://github.com/Reynold4k/gc-serial-align/releases/download/v0.1.0/rep1_nine_section_reconstruction_compact.mp4) (86 s, 1080p60) | Stereo-seq sections converge → the frame lifts into the cutting axis → five IF sections matched in one at a time → the nine-section stack → one full turn |
+| [rep2 — full reconstruction](https://github.com/Reynold4k/gc-serial-align/releases/download/v0.1.0/rep2_nine_section_reconstruction_compact.mp4) (86 s, 1080p60) | the same film for the second replicate |
+
+Three things in the films are staging rather than measurement, and are captioned on screen
+as such: the z axis is exaggerated ×45, each IF section's sideways entry is choreography
+(its landing position is the real Stage-A placement), and the warped IF outline is re-cut
+from the warped channels with this package's own tissue recipe, because no warped tissue
+mask is stored.
+
+The renderer is in [`films/`](films/) — a perspective camera over gcalign's own output,
+with every installation-specific path in one file. Its README explains how each act is
+put together and what it reads.
 
 ---
 
@@ -243,6 +291,7 @@ Stages can be run separately with `--from`, `--to` or `--only` (see `gcalign sta
 ### The viewer
 
 <p align="center"><img src="docs/img/viewer_gc.jpg" width="100%"></p>
+<p align="center"><img src="docs/img/viewer_both.jpg" width="100%"></p>
 
 Five views (keys `1`–`5`): the GC columns on their own; the ST sections; the IF sections;
 both stacked together, alternating by modality; and the dark-zone / light-zone view. Click a
