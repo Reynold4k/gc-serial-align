@@ -7,20 +7,34 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: test (Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.11"]
+        include:
+          # Python 3.9 is the oldest version gcalign supports. The newest runner
+          # image has no build of Python 3.9, so this job runs on Ubuntu 24.04.
+          - {python-version: "3.9", os: ubuntu-24.04}
+          - {python-version: "3.11", os: ubuntu-latest}
+          # Python 3.13 is the newest version for which every dependency
+          # publishes a wheel. This job installs the newest dependency versions.
+          - {python-version: "3.13", os: ubuntu-latest}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-      - name: Install
+      - name: Install gcalign
         run: python -m pip install -e ".[test,film]"
+      - name: Install a virtual display
+        # The test of the 3D figure draws off screen and needs an OpenGL context.
+        # Xvfb with the Mesa software renderer provides one on a machine without
+        # a screen.
+        run: sudo apt-get update && sudo apt-get install -y xvfb libgl1-mesa-dri
       - name: Test
-        # the suite builds a small experiment with a known answer and runs the
-        # whole pipeline on it; no data is downloaded
-        run: python -m pytest
+        # The suite builds a small experiment with a known answer and runs the
+        # whole pipeline on it. No data is downloaded. -rs prints the reason of
+        # every skipped test.
+        run: xvfb-run -a python -m pytest -rs

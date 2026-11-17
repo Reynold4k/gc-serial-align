@@ -127,6 +127,15 @@ def fill_unmeasured(masks: np.ndarray, slots: list[int]) -> tuple[np.ndarray, li
     return out, filled
 
 
+def n_polygons(mesh) -> int:
+    """Number of polygons of a surface mesh.
+
+    The count is read from VTK directly because PyVista renamed its property:
+    `n_faces_strict` up to PyVista 0.48, `n_faces` from 0.49 on.
+    """
+    return int(mesh.GetNumberOfPolys())
+
+
 def build_column(cfg, volume: np.ndarray, x0: float, y0: float, z0: float,
                  z_pitch_um: float | None = None):
     """Oversample in z, Gaussian-smooth, march, decimate.
@@ -173,20 +182,20 @@ def build_column(cfg, volume: np.ndarray, x0: float, y0: float, z0: float,
         z0 + (verts[:, 0] * z_gain - cfg.columns.pad_z) * z_pitch_um,
     ])
     mesh = pv.PolyData(xyz, np.hstack([np.full((len(faces), 1), 3), faces]).astype(np.int64))
-    if mesh.n_faces_strict > cfg.columns.target_faces:
-        mesh = mesh.decimate(1 - cfg.columns.target_faces / mesh.n_faces_strict, volume_preservation=True)
+    if n_polygons(mesh) > cfg.columns.target_faces:
+        mesh = mesh.decimate(1 - cfg.columns.target_faces / n_polygons(mesh), volume_preservation=True)
     if mesh.n_open_edges:
         # decimation very occasionally leaves a few-triangle crack; close it so
         # the watertight guarantee holds for every column, not almost every one
         patched = mesh.fill_holes(200.0).clean().triangulate()
-        if patched.n_faces_strict >= 8 and patched.n_open_edges < mesh.n_open_edges:
+        if n_polygons(patched) >= 8 and patched.n_open_edges < mesh.n_open_edges:
             mesh = patched
     cells = np.asarray(mesh.faces).reshape(-1, 4)[:, 1:]
     if len(cells) < 8:
         return None
     shell = mesh
-    if mesh.n_faces_strict > cfg.columns.shell_faces and mesh.is_all_triangles:
-        shell = mesh.decimate(1 - cfg.columns.shell_faces / mesh.n_faces_strict, volume_preservation=True)
+    if n_polygons(mesh) > cfg.columns.shell_faces and mesh.is_all_triangles:
+        shell = mesh.decimate(1 - cfg.columns.shell_faces / n_polygons(mesh), volume_preservation=True)
     shell_cells = np.asarray(shell.faces).reshape(-1, 4)[:, 1:]
     return (np.asarray(mesh.points, np.float32), cells.astype(np.int32),
             float(mesh.volume), int(mesh.n_open_edges),

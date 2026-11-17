@@ -349,7 +349,7 @@ def splat(W: int, H: int, layers, gain: float = 0.6) -> Image.Image:
     rgba = np.empty((H, W, 4), np.uint8)
     rgba[..., :3] = np.clip(col, 0, 255)
     rgba[..., 3] = (a * 255).astype(np.uint8)
-    return Image.fromarray(rgba, "RGBA")
+    return Image.fromarray(rgba)                          # uint8, four channels: Pillow mode "RGBA"
 
 
 # --------------------------------------------------------------------------

@@ -114,7 +114,7 @@ def _scrim(W: int, H: int, side: str) -> Image.Image:
         a = np.maximum(np.maximum(corner, foot), head)
     rgba = np.zeros((H, W, 4), np.uint8)
     rgba[..., 3] = (a * 255).astype(np.uint8)
-    return Image.fromarray(rgba, "RGBA")
+    return Image.fromarray(rgba)                          # uint8, four channels: Pillow mode "RGBA"
 
 
 # --------------------------------------------------------------------------

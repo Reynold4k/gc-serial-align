@@ -41,7 +41,7 @@ def _rgb(hexcolour: str) -> np.ndarray:
 # --------------------------------------------------------------------------
 def _resize(arr: np.ndarray, shape, resample=Image.BILINEAR) -> np.ndarray:
     """Resample a float plane to ``shape`` (rows, cols), pixel centres aligned."""
-    img = Image.fromarray(np.ascontiguousarray(arr, np.float32), "F")
+    img = Image.fromarray(np.ascontiguousarray(arr, np.float32))     # float32, 2D: Pillow mode "F"
     return np.asarray(img.resize((shape[1], shape[0]), resample), np.float32)
 
 
@@ -118,7 +118,7 @@ def compose(shape, layers) -> Image.Image:
     out = np.empty(tuple(shape) + (4,), np.uint8)
     out[..., :3] = np.clip(rgb / np.maximum(acc, 1e-6)[..., None], 0, 255)
     out[..., 3] = np.clip(acc * 255 + 0.5, 0, 255)
-    return Image.fromarray(out, "RGBA")
+    return Image.fromarray(out)                           # uint8, four channels: Pillow mode "RGBA"
 
 
 def screen(base: np.ndarray, layer: np.ndarray) -> np.ndarray:

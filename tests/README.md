@@ -17,6 +17,23 @@ Running time: about two minutes on one CPU.
 | `test_pipeline_synthetic.py` | the complete pipeline and the commands `check`, `transfer`, `export`, `map` on synthetic data with a known transform |
 | `test_viewer.py`, `test_figures.py`, `test_film.py` | the viewer, the figures, the report and the film are produced for the synthetic run |
 
+## Tests that need extra software
+
+Three tests are skipped when the software they need is missing. `pytest -rs` prints the
+reason of every skipped test.
+
+| Test | What it needs |
+| --- | --- |
+| `test_film.py::test_encode_a_short_clip` | ffmpeg. The `film` extra installs one. |
+| `test_figures.py::test_3d_columns` | an OpenGL context for drawing off screen. On a machine without a screen, run `xvfb-run -a pytest`. |
+| `test_viewer.py::test_the_page_opens_without_errors` | Playwright and a Chromium browser: `pip install -e ".[browser]"`, then `playwright install chromium`. To use a Chromium that is already installed, set the environment variable `GCALIGN_CHROMIUM` to its path. |
+
+## Automatic tests on GitHub
+
+`.github/workflows/tests.yml` runs the test suite for every pull request and for every
+push to `main`, on Python 3.9, 3.11 and 3.13. The Python 3.13 job installs the newest
+version of every dependency.
+
 ## The synthetic test data
 
 `synthetic.py` generates a small experiment for which the correct answer is known:

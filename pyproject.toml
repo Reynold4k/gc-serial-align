@@ -49,4 +49,12 @@ gcalign = ["templates/*.html", "assets/fonts/*.ttf", "assets/fonts/OFL.txt"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
-filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
+filterwarnings = [
+  # deprecations raised inside other libraries are not ours to fix
+  "ignore::DeprecationWarning",
+  "ignore::FutureWarning",
+  # deprecations that gcalign's own code triggers are shown, so that they are
+  # fixed before a library removes the old behaviour
+  "default::DeprecationWarning:gcalign.*",
+  "default::FutureWarning:gcalign.*",
+]
