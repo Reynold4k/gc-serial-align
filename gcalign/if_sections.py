@@ -18,6 +18,7 @@ import tifffile
 from scipy import ndimage as ndi
 from skimage import filters, measure, morphology
 
+from . import masks
 from .config import Config, stage_dir
 from .parallel import run_sections
 
@@ -128,9 +129,9 @@ def tissue_mask(cfg: Config, planes: dict[str, np.ndarray], sigma: float = 6.0):
     """One connected section, smoothed across the ~77 px stitching ripple."""
     combined = _combined(cfg, planes, sigma)
     mask = combined > cfg.if_images.tissue_threshold_scale * filters.threshold_otsu(combined)
-    mask = morphology.binary_closing(mask, morphology.disk(8))
+    mask = masks.closing(mask, morphology.disk(8))
     mask = ndi.binary_fill_holes(mask)
-    mask = morphology.remove_small_objects(mask, 5000)
+    mask = masks.remove_small(mask, 5000)
     labels = measure.label(mask)
     if labels.max() > 1:
         areas = np.bincount(labels.ravel())
@@ -165,14 +166,14 @@ def segment_gc(cfg: Config, gl7: np.ndarray, tissue: np.ndarray) -> np.ndarray:
     high = filters.threshold_otsu(inside)
     low = np.percentile(inside, 50) + 0.65 * (high - np.percentile(inside, 50))
     seeds = (smoothed > high) & tissue
-    seeds = morphology.remove_small_objects(seeds, cfg.if_images.min_gc_px // 2)
+    seeds = masks.remove_small(seeds, cfg.if_images.min_gc_px // 2)
     grown = (smoothed > low) & tissue
     labels = measure.label(grown)
     keep = np.unique(labels[seeds])
     mask = np.isin(labels, keep[keep > 0])
-    mask = morphology.binary_closing(mask, morphology.disk(2))
+    mask = masks.closing(mask, morphology.disk(2))
     mask = ndi.binary_fill_holes(mask)
-    return morphology.remove_small_objects(mask, cfg.if_images.min_gc_px)
+    return masks.remove_small(mask, cfg.if_images.min_gc_px)
 
 
 def segment_section(cfg: Config, name: str) -> dict:

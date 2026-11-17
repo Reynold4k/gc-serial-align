@@ -63,10 +63,17 @@ The interactive viewer was rewritten. It shows the same data as in 0.1 and adds:
 
 ### Tests
 
-- `tests/` holds 79 tests (pytest). They run the whole pipeline on a synthetic experiment
+- `tests/` holds 85 tests (pytest). They run the whole pipeline on a synthetic experiment
   whose true registration is known, and test the figures, the report, the film and the
   viewer. [tests/README.md](tests/README.md) explains how to run them.
 - `tests/regression/compare_runs.py` compares two run folders file by file.
+- A GitHub Actions workflow runs the tests on Python 3.9, 3.11 and 3.13.
+
+### Compatibility with current library versions
+
+- gcalign runs without deprecation warnings on scikit-image 0.26, PyVista 0.49 and
+  Pillow 13. The functions that these versions deprecate were replaced by equivalent code
+  (`gcalign/masks.py` for the two scikit-image functions). The results are identical.
 
 ### Bugs fixed
 

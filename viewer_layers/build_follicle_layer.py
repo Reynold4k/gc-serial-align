@@ -30,6 +30,7 @@ import numpy as np
 from skimage import filters, morphology
 
 import layer_common as common
+from gcalign import masks              # noqa: E402  (layer_common makes gcalign importable)
 
 
 def thin(points: np.ndarray, rng: np.random.Generator, cap: int) -> np.ndarray:
@@ -77,8 +78,8 @@ def main(argv=None) -> int:
                 tissue |= run.channel(name, other) > 0
             threshold = float(filters.threshold_otsu(marker[tissue]))
             mask = (marker > threshold) & tissue
-            mask = morphology.binary_closing(mask, morphology.disk(2))
-            mask = morphology.remove_small_objects(mask, args.min_blob_px)
+            mask = masks.closing(mask, morphology.disk(2))
+            mask = masks.remove_small(mask, args.min_blob_px)
             overlap = float((mask & (run.labels(name) > 0)).sum() / max(mask.sum(), 1))
             rows, cols = np.nonzero(mask)
             points = run.grid.to_xy(rows, cols).astype(np.float32)

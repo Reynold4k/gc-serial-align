@@ -14,6 +14,7 @@ Running time: about two minutes on one CPU.
 | `test_config.py` | reading the config: section layout, depth of each section, error messages for wrong entries |
 | `test_theme.py` | the colours and fonts: black background, readable text, stable GC colours, font files present |
 | `test_geometry.py` | single functions of the registration (similarity fit, GC matching, cross-correlation, ICP, filling of skipped sections) against known results |
+| `test_masks.py` | the two mask operations of `gcalign/masks.py` (closing, removal of small objects) against their definitions |
 | `test_pipeline_synthetic.py` | the complete pipeline and the commands `check`, `transfer`, `export`, `map` on synthetic data with a known transform |
 | `test_viewer.py`, `test_figures.py`, `test_film.py` | the viewer, the figures, the report and the film are produced for the synthetic run |
 
