@@ -4,16 +4,38 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gcalign"
-version = "0.1.0"
+version = "0.2.0"
 description = "Align serial immunofluorescence sections into a spatial-transcriptomics frame and reconstruct germinal centres in 3D"
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
+authors = [{name = "Chen Zhu"}]
+keywords = ["spatial transcriptomics", "immunofluorescence", "image registration",
+            "serial sections", "Stereo-seq", "germinal centre"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
+  "Topic :: Scientific/Engineering :: Image Processing",
+]
 dependencies = [
   "numpy>=1.24", "scipy>=1.10", "pandas>=2.0", "scikit-image>=0.22",
-  "h5py>=3.9", "tifffile>=2023.7", "aicspylibczi>=4.0",
-  "pyvista>=0.43", "plotly>=5.18", "PyYAML>=6.0",
+  "h5py>=3.9", "tifffile>=2023.7", "aicspylibczi>=3.1",
+  "pyvista>=0.43", "plotly>=5.18", "matplotlib>=3.7", "pillow>=10.0",
+  "fonttools>=4.40", "PyYAML>=6.0",
 ]
+
+[project.optional-dependencies]
+# `gcalign animate` needs an ffmpeg; this brings one if the system has none
+film = ["imageio-ffmpeg>=0.4"]
+test = ["pytest>=7"]
+# tests/browser/drive_viewer.py opens the viewer in a headless browser
+browser = ["playwright>=1.40"]
+
+[project.urls]
+Homepage = "https://github.com/Reynold4k/gc-serial-align"
+Documentation = "https://github.com/Reynold4k/gc-serial-align/tree/main/docs"
 
 [project.scripts]
 gcalign = "gcalign.cli:main"
@@ -22,4 +44,17 @@ gcalign = "gcalign.cli:main"
 include = ["gcalign*"]
 
 [tool.setuptools.package-data]
-gcalign = ["templates/*.html"]
+gcalign = ["templates/*.html", "assets/fonts/*.ttf", "assets/fonts/OFL.txt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = [
+  # deprecations raised inside other libraries are not ours to fix
+  "ignore::DeprecationWarning",
+  "ignore::FutureWarning",
+  # deprecations that gcalign's own code triggers are shown, so that they are
+  # fixed before a library removes the old behaviour
+  "default::DeprecationWarning:gcalign.*",
+  "default::FutureWarning:gcalign.*",
+]

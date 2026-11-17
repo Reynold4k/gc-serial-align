@@ -65,8 +65,83 @@ def outline_patches(cfg, mask: np.ndarray, x0: float, y0: float, z_um: float):
     return patches
 
 
-def build_column(cfg, volume: np.ndarray, x0: float, y0: float, z0: float):
+METRIC_COLUMNS = ["merged_gc_id", "n_planes", "n_st_planes", "n_if_planes", "volume_um3",
+                  "mesh_volume_um3", "mesh_open_edges", "max_area_um2", "max_equiv_radius_um",
+                  "median_equiv_radius_um", "radius_cv", "centroid_drift_um", "z_span_um",
+                  "n_vertices", "n_faces"]
+
+
+def stack_layout(cfg: Config) -> tuple[list[int], float]:
+    """Where each plane sits in a regularly spaced voxel stack.
+
+    Returns the slice position of every plane (cutting order) and the slice
+    pitch in micrometres. Consecutive sections give positions 0, 1, 2, ... at
+    one section thickness. If sections were skipped the pitch is the largest
+    step that still lands on every kept section, and a position that no section
+    occupies is a gap to be bridged (see `fill_unmeasured`).
+    """
+    from functools import reduce
+    from math import gcd
+
+    indices = [index for _, _, index in cfg.planes]
+    steps = [b - a for a, b in zip(indices, indices[1:])]
+    unit = reduce(gcd, steps) if steps else 1
+    slots = [(index - indices[0]) // unit for index in indices]
+    return slots, unit * cfg.section_thickness_um
+
+
+def signed_distance(mask: np.ndarray) -> np.ndarray:
+    """Distance to the outline: positive inside, negative outside."""
+    return ndi.distance_transform_edt(mask) - ndi.distance_transform_edt(~mask)
+
+
+def fill_unmeasured(masks: np.ndarray, slots: list[int]) -> tuple[np.ndarray, list[int]]:
+    """Lay the measured outlines out at their true spacing and bridge the gaps.
+
+    `masks` holds one outline per measured plane. A slice position that no
+    section occupies is filled by interpolating the signed distance to the
+    outline between the measured planes either side of it - the standard way to
+    morph one cross-section into the next. Nothing is filled where either
+    flanking plane is empty: an absence that was measured stays an absence.
+    With no gaps the input comes back unchanged.
+    """
+    n_slices = slots[-1] + 1
+    if n_slices == len(slots):
+        return masks, []
+    out = np.zeros((n_slices,) + masks.shape[1:], bool)
+    for plane, slot in enumerate(slots):
+        out[slot] = masks[plane]
+    filled = []
+    for plane in range(len(slots) - 1):
+        low, high = slots[plane], slots[plane + 1]
+        if high - low < 2:
+            continue
+        filled.extend(range(low + 1, high))
+        a, b = masks[plane], masks[plane + 1]
+        if not a.any() or not b.any():
+            continue
+        da, db = signed_distance(a), signed_distance(b)
+        for slot in range(low + 1, high):
+            t = (slot - low) / (high - low)
+            out[slot] = ((1 - t) * da + t * db) > 0
+    return out, filled
+
+
+def n_polygons(mesh) -> int:
+    """Number of polygons of a surface mesh.
+
+    The count is read from VTK directly because PyVista renamed its property:
+    `n_faces_strict` up to PyVista 0.48, `n_faces` from 0.49 on.
+    """
+    return int(mesh.GetNumberOfPolys())
+
+
+def build_column(cfg, volume: np.ndarray, x0: float, y0: float, z0: float,
+                 z_pitch_um: float | None = None):
     """Oversample in z, Gaussian-smooth, march, decimate.
+
+    `volume` is a stack of outlines one slice pitch apart (`z_pitch_um`, the
+    section thickness unless sections were skipped).
 
     The smoothing happens in the volume, not on the mesh: the iso-surface of a
     Gaussian-blurred stack is already smooth, and a mesh smoother on top of it
@@ -74,6 +149,8 @@ def build_column(cfg, volume: np.ndarray, x0: float, y0: float, z0: float):
     closes instead of being clipped at the array border, which is what makes the
     meshes watertight and keeps the enclosed volume equal to the measured one.
     """
+    if z_pitch_um is None:
+        z_pitch_um = cfg.section_thickness_um
     padded = np.pad(volume.astype(np.float32), ((cfg.columns.pad_z, cfg.columns.pad_z), (cfg.columns.pad_xy, cfg.columns.pad_xy),
                                                 (cfg.columns.pad_xy, cfg.columns.pad_xy)))
     n_z = padded.shape[0]
@@ -102,23 +179,23 @@ def build_column(cfg, volume: np.ndarray, x0: float, y0: float, z0: float):
     xyz = np.column_stack([
         x0 + (verts[:, 2] - cfg.columns.pad_xy) * cfg.grid_um,
         y0 + (verts[:, 1] - cfg.columns.pad_xy) * cfg.grid_um,
-        z0 + (verts[:, 0] * z_gain - cfg.columns.pad_z) * cfg.section_thickness_um,
+        z0 + (verts[:, 0] * z_gain - cfg.columns.pad_z) * z_pitch_um,
     ])
     mesh = pv.PolyData(xyz, np.hstack([np.full((len(faces), 1), 3), faces]).astype(np.int64))
-    if mesh.n_faces_strict > cfg.columns.target_faces:
-        mesh = mesh.decimate(1 - cfg.columns.target_faces / mesh.n_faces_strict, volume_preservation=True)
+    if n_polygons(mesh) > cfg.columns.target_faces:
+        mesh = mesh.decimate(1 - cfg.columns.target_faces / n_polygons(mesh), volume_preservation=True)
     if mesh.n_open_edges:
         # decimation very occasionally leaves a few-triangle crack; close it so
         # the watertight guarantee holds for every column, not almost every one
         patched = mesh.fill_holes(200.0).clean().triangulate()
-        if patched.n_faces_strict >= 8 and patched.n_open_edges < mesh.n_open_edges:
+        if n_polygons(patched) >= 8 and patched.n_open_edges < mesh.n_open_edges:
             mesh = patched
     cells = np.asarray(mesh.faces).reshape(-1, 4)[:, 1:]
     if len(cells) < 8:
         return None
     shell = mesh
-    if mesh.n_faces_strict > cfg.columns.shell_faces and mesh.is_all_triangles:
-        shell = mesh.decimate(1 - cfg.columns.shell_faces / mesh.n_faces_strict, volume_preservation=True)
+    if n_polygons(mesh) > cfg.columns.shell_faces and mesh.is_all_triangles:
+        shell = mesh.decimate(1 - cfg.columns.shell_faces / n_polygons(mesh), volume_preservation=True)
     shell_cells = np.asarray(shell.faces).reshape(-1, 4)[:, 1:]
     return (np.asarray(mesh.points, np.float32), cells.astype(np.int32),
             float(mesh.volume), int(mesh.n_open_edges),
@@ -135,20 +212,27 @@ def run(cfg: Config) -> None:
 
     gc_ids = sorted({int(v) for lab in labels.values() for v in np.unique(lab) if v > 0})
     print(f"{len(gc_ids)} merged GCs on the stack")
+    slots, pitch_um = stack_layout(cfg)
+    bridged: list[int] = []
+    if slots[-1] + 1 != len(slots):
+        print(f"sections were skipped: {slots[-1] + 1 - len(slots)} slice position(s) between "
+              f"measured planes are bridged by interpolating the outlines")
 
     columns, patches_out, rows = {}, {}, []
     for gid in gc_ids:
         masks = np.stack([labels[name] == gid for name, _, _ in PLANES])
-        present = [i for i in range(9) if masks[i].sum() >= cfg.columns.min_px_per_plane]
+        present = [i for i in range(len(PLANES)) if masks[i].sum() >= cfg.columns.min_px_per_plane]
         if len(present) < cfg.columns.min_planes:
             continue
         ys, xs = np.nonzero(masks.any(axis=0))
         pad = 4
         r0, r1 = max(ys.min() - pad, 0), min(ys.max() + pad + 1, masks.shape[1])
         c0, c1 = max(xs.min() - pad, 0), min(xs.max() + pad + 1, masks.shape[2])
-        sub = masks[:, r0:r1, c0:c1]
+        sub, bridged = fill_unmeasured(masks[:, r0:r1, c0:c1], slots)
 
-        built = build_column(cfg, sub, x0 + c0 * cfg.grid_um, y0 + r0 * cfg.grid_um, 0.0)
+        # the volume's first slice is the first section of the stack, at z = 0
+        built = build_column(cfg, sub, x0 + c0 * cfg.grid_um, y0 + r0 * cfg.grid_um, 0.0,
+                             z_pitch_um=pitch_um)
         if built is None:
             continue
         verts, faces, mesh_volume, open_edges, shell_v, shell_f = built
@@ -157,7 +241,7 @@ def run(cfg: Config) -> None:
 
         per_plane = []
         for index, (name, kind, section) in enumerate(PLANES):
-            z_um = (section - 1) * cfg.section_thickness_um
+            z_um = cfg.z_um(section)
             mask = masks[index]
             area_px = int(mask.sum())
             patch = outline_patches(cfg, mask[r0:r1, c0:c1], x0 + c0 * cfg.grid_um,
@@ -182,7 +266,8 @@ def run(cfg: Config) -> None:
             "n_planes": len(present),
             "n_st_planes": sum(1 for i in present if PLANES[i][1] == "ST"),
             "n_if_planes": sum(1 for i in present if PLANES[i][1] == "IF"),
-            "volume_um3": float(areas.sum() * cfg.section_thickness_um),
+            # Cavalieri: every slice stands for one pitch of depth
+            "volume_um3": float(sub.sum() * cfg.grid_um ** 2 * pitch_um),
             "mesh_volume_um3": float(mesh_volume),
             "mesh_open_edges": int(open_edges),
             "max_area_um2": float(areas.max()),
@@ -190,13 +275,17 @@ def run(cfg: Config) -> None:
             "median_equiv_radius_um": float(np.median(radii)),
             "radius_cv": float(radii.std() / radii.mean()),
             "centroid_drift_um": float(np.linalg.norm(centres - centres.mean(0), axis=1).max()),
-            "z_span_um": float((present[-1] - present[0]) * cfg.section_thickness_um),
+            "z_span_um": float((slots[present[-1]] - slots[present[0]]) * pitch_um),
             "n_vertices": int(len(verts)),
             "n_faces": int(len(faces)),
         })
 
-    table = pd.DataFrame(rows).sort_values("volume_um3", ascending=False)
+    table = pd.DataFrame(rows, columns=METRIC_COLUMNS).sort_values("volume_um3", ascending=False)
     table.to_csv(OUT / "gc_column_metrics.csv", index=False)
+    if not rows:
+        print(f"no germinal centre is present on at least {cfg.columns.min_planes} sections with "
+              f"{cfg.columns.min_px_per_plane} pixels each, so no 3D surface was built "
+              "(see columns.min_planes and columns.min_px_per_plane)")
 
     np.savez_compressed(
         OUT / "gc_columns.npz",
@@ -220,18 +309,20 @@ def run(cfg: Config) -> None:
         "total_shell_faces": int(sum(len(c["shell_faces"]) for c in columns.values())),
         "total_vertices": int(sum(len(c["verts"]) for c in columns.values())),
         "n_plane_patches": len(patches_out),
-        "z_step_um": cfg.section_thickness_um, "grid_um": cfg.grid_um,
+        "z_step_um": pitch_um, "grid_um": cfg.grid_um,
+        "plane_slots": slots, "bridged_slots": bridged,
         "z_oversample": cfg.columns.z_oversample,
         "sigma_xy_px": cfg.columns.sigma_xy_px, "sigma_z_sub": cfg.columns.sigma_z_sub,
         "mesh_smoothing": "volume-domain Gaussian only; no mesh smoother",
         "pad_z": cfg.columns.pad_z, "pad_xy": cfg.columns.pad_xy,
         "iso_level": "volume-preserving (matches the measured voxel count)",
         "target_faces": cfg.columns.target_faces,
-        "planes": [{"name": n, "kind": k, "z_um": (i - 1) * cfg.section_thickness_um} for n, k, i in PLANES],
+        "planes": [{"name": n, "kind": k, "z_um": cfg.z_um(i)} for n, k, i in PLANES],
     }, indent=2))
 
     print(f"built {len(columns)} columns, {sum(len(c['faces']) for c in columns.values()):,} faces, "
           f"{len(patches_out)} plane patches")
-    print(table.head(10)[["merged_gc_id", "n_planes", "volume_um3", "max_equiv_radius_um",
-                          "radius_cv", "centroid_drift_um", "n_faces"]].to_string(index=False))
+    if rows:
+        print(table.head(10)[["merged_gc_id", "n_planes", "volume_um3", "max_equiv_radius_um",
+                              "radius_cv", "centroid_drift_um", "n_faces"]].to_string(index=False))
 

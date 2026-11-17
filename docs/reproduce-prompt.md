@@ -1,25 +1,34 @@
-# Reproducing this work
+# Running gcalign on your own data, and rebuilding it from scratch
 
-Two ways to use this file: run the pipeline on your own data (top), or rebuild the whole
-thing from scratch with an AI coding assistant (bottom).
+This page has two parts. Part A lists the steps to run gcalign on your own sections.
+Part B is a prompt for an AI coding assistant that rebuilds the whole pipeline from
+nothing; use it to adapt the method to a setup that gcalign does not support.
 
-## A. Run it on your data
+## A. Run gcalign on your data
 
-1. Register your ST sections to each other first. We used Spateo's `morpho_align`; any
-   method works, as long as the result is an AnnData with registered coordinates in
-   `obsm` and a per-section label plus a structure identity in `obs`.
-2. Copy `configs/rep1_mouse_spleen.yaml`, edit the paths, the section list, the channel
-   names and `gc_channel`.
-3. `gcalign show --config yours.yaml` — check the derived layout and the z span.
-4. `gcalign run --config yours.yaml`.
-5. Read `validation_report.json` before you believe any picture. The three numbers that
-   matter most: did all sections agree on handedness; how many GCs matched within
-   `close_match_um`; and the two-sided disagreement on the interior sections.
+1. Register your ST sections to each other. We used `morpho_align` from Spateo; any method
+   works. The result must be an AnnData file with the registered coordinates in `obsm`,
+   a column in `obs` that names the section of each bin, and a column in `obs` with the
+   integer id of the structure each bin belongs to (0 = none).
+2. Copy `configs/template.yaml`, which lists every setting with an explanation, or one of
+   the two example configs. Edit the paths, the section list, the channel names and
+   `gc_channel` (the IF channel that shows your structure).
+3. `gcalign show --config yours.yaml` prints the section layout and the depth of the
+   stack. Check that it matches your experiment.
+4. `gcalign check --config yours.yaml` opens every input file and reports problems.
+5. `gcalign run --config yours.yaml --jobs 0` runs the pipeline on all CPUs. The result
+   does not depend on the number of CPUs.
+6. `gcalign report --config yours.yaml` writes the quality report. Read it before you use
+   the result. The three most important values are: whether all IF sections have the same
+   mirror state; how many GCs were matched within `close_match_um`; and the two-sided
+   disagreement of the IF sections inside the stack.
+7. [commands.md](commands.md) describes the commands for figures, the film, the transfer
+   of IF intensity to ST bins, and registered images.
 
-## B. Rebuild it from scratch
+## B. Rebuild the pipeline from scratch
 
-The prompt below reconstructs this package. It is written to be pasted into a coding
-assistant that has access to your data and a shell. Replace the bracketed parts.
+The text below is a prompt. Paste it into an AI coding assistant that can read your data
+and run commands. Replace the parts in square brackets with your own values.
 
 ---
 
@@ -71,9 +80,7 @@ assistant that has access to your data and a shell. Replace the bracketed parts.
 
 ---
 
-## What to watch out for
-
-Things that cost us time, in the order we hit them:
+## Problems we met, in the order they occurred
 
 1. **Check what your images actually contain before designing around them.** Ours turned
    out to have a fourth channel nobody had mentioned, and a DAPI channel too saturated to

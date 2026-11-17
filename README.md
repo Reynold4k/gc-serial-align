@@ -1,223 +1,53 @@
-# gcalign — putting immunofluorescence and spatial transcriptomics on one ruler
+<p align="center"><img src="docs/img/hero.jpg" width="100%" alt="Nine serial sections of one mouse spleen, five imaged by immunofluorescence and four profiled by Stereo-seq, registered into one coordinate system by gcalign"></p>
 
-You cut a block of tissue into serial sections. Some sections go to
-**immunofluorescence** (IF), where you see proteins and beautiful morphology but no
-transcriptome. The others go to **spatial transcriptomics** (ST — Stereo-seq here), where
-you get the transcriptome but the section is consumed. Two modalities, interleaved,
-never the same physical cells.
+<h1 align="center">gcalign</h1>
 
-This package puts all of those sections back into **one shared coordinate system**, so a
-structure that spans several sections can be followed through the whole stack and
-reconstructed in 3D. It was built for germinal centres in mouse spleen, and it ships an
-interactive viewer that you open in a browser.
+<p align="center">
+<b>Registers immunofluorescence sections to spatial-transcriptomics sections of the same tissue block.</b>
+</p>
+
+<p align="center">
+<img alt="version 0.2.0" src="https://img.shields.io/badge/version-0.2.0-4D8DFF?style=flat-square&labelColor=000000">
+<img alt="Python 3.9 or later" src="https://img.shields.io/badge/python-%E2%89%A53.9-4D8DFF?style=flat-square&labelColor=000000">
+<img alt="MIT licence" src="https://img.shields.io/badge/licence-MIT-4D8DFF?style=flat-square&labelColor=000000">
+<img alt="CPU only" src="https://img.shields.io/badge/runs%20on-CPU-FF4D9D?style=flat-square&labelColor=000000">
+</p>
+
+## What gcalign does
+
+A tissue block is cut into serial sections. Some sections are imaged by
+**immunofluorescence (IF)**; the others are profiled by **spatial transcriptomics (ST)**.
+gcalign places every IF section in the coordinate system of the ST sections. After that,
+all sections share one coordinate system.
+
+| | |
+| --- | --- |
+| **Input** | IF images of the IF sections (Zeiss CZI or TIFF), and one AnnData file with the ST sections. The ST sections must already be registered to each other, and each ST bin must carry the id of the structure it belongs to. |
+| **Output** | The position of every IF section in the ST coordinate system · one id per structure on all sections · a 3D surface of each structure · an interactive viewer · figures · a quality report · a film · the IF intensity at every ST bin · registered IF images at any pixel size. |
+| **Method** | gcalign matches structures that IF and ST detect independently. It does not match pixels or cells. In our data the structures are germinal centres (GCs): IF detects them by GL7 staining, ST detects them as a transcriptional cluster. |
+| **Tested on** | Mouse spleen, two replicates. Each replicate has nine consecutive 10 µm sections: five IF sections and four Stereo-seq sections. |
 
 <table>
 <tr>
-<td width="50%"><img src="docs/img/rep1_film.gif" width="100%"></td>
-<td width="50%"><img src="docs/img/rep2_film.gif" width="100%"></td>
+<td width="50%"><img src="docs/img/rep1_film.webp" width="100%" alt="Film of the registration of replicate 1"></td>
+<td width="50%"><img src="docs/img/rep2_film.webp" width="100%" alt="Film of the registration of replicate 2"></td>
 </tr>
 <tr>
-<td align="center"><em><b>replicate 1</b> — 58 matched germinal centres</em></td>
-<td align="center"><em><b>replicate 2</b> — 70 matched germinal centres</em></td>
+<td align="center">Replicate 1: 58 GCs, 30 of them present on all nine sections</td>
+<td align="center">Replicate 2: 75 GCs, 38 of them present on all nine sections</td>
 </tr>
 </table>
 
-<p align="center"><em>Both replicates, whole run in thirteen seconds: four Stereo-seq sections
-converging, the frame lifting into the cutting axis, one immunofluorescence section being
-matched in, and the finished nine-section stack turning — blue IF alternating with pink
-Stereo-seq. Full-length films below.</em></p>
+The two films replay the registration of our two replicates in 20 seconds each. They are
+rendered by `gcalign animate` from the files of the finished runs. Each film shows, in
+this order: the ST sections being registered to each other (by Spateo, before gcalign);
+the ST sections stacked in cutting order; one IF section being matched to its
+neighbouring ST sections; all nine sections in one coordinate system; and one turn of the
+stack, with GCs from IF sections in blue and GCs from ST sections in pink. The full-length
+films (86 seconds each) show the matching of every IF section; `gcalign animate` renders
+them.
 
----
-
-## Watch it run
-
-Both films below are rendered from the pipeline's own saved output — no registration is
-recomputed to make them, and nothing on screen is an interpolation between two endpoints.
-The Stereo-seq act replays all 1,100 stored Spateo iterations in their saved order, one
-iteration per frame; the immunofluorescence act replays the 12 stored Stage-A ICP
-iterations per section, reconstructed with this package's own functions and asserted
-identical to the transform in `global_transforms.json`.
-
-<p align="center"><img src="docs/img/gc_matching_topview.gif" width="100%"></p>
-<p align="center"><em>One section being matched in. The camera drops to a top view, the real ICP
-iterations run, and it pushes into the densest neighbourhood of germinal centres — because
-after the first three iterations the correction is tens of micrometres, which is under a
-pixel at section scale. White lines join each IF germinal centre to the Stereo-seq one it
-was paired with; the readout is the live iteration count, pair count and mean pair
-distance.</em></p>
-
-| Film | What is in it |
-|---|---|
-| [rep1 — full reconstruction](https://github.com/Reynold4k/gc-serial-align/releases/download/v0.1.0/rep1_nine_section_reconstruction_compact.mp4) (86 s, 1080p60) | Stereo-seq sections converge → the frame lifts into the cutting axis → five IF sections matched in one at a time → the nine-section stack → one full turn |
-| [rep2 — full reconstruction](https://github.com/Reynold4k/gc-serial-align/releases/download/v0.1.0/rep2_nine_section_reconstruction_compact.mp4) (86 s, 1080p60) | the same film for the second replicate |
-
-Three things in the films are staging rather than measurement, and are captioned on screen
-as such: the z axis is exaggerated ×45, each IF section's sideways entry is choreography
-(its landing position is the real Stage-A placement), and the warped IF outline is re-cut
-from the warped channels with this package's own tissue recipe, because no warped tissue
-mask is stored.
-
-The renderer is in [`films/`](films/) — a perspective camera over gcalign's own output,
-with every installation-specific path in one file. Its README explains how each act is
-put together and what it reads.
-
----
-
-## The problem, in plain terms
-
-Three things make this harder than it sounds.
-
-**1. Every section lands differently.** Each section is picked up onto a slide or a chip
-by hand. It arrives rotated by an arbitrary angle, sometimes flipped over, and slightly
-stretched or compressed. Nothing about the imaging tells you by how much.
-
-**2. The two modalities measure different things.** An IF image is protein fluorescence.
-An ST dataset is counts of mRNA per spot. You cannot simply overlay them and slide one
-until the pixel values correlate — they are not measuring the same quantity, so there is
-nothing to correlate.
-
-**3. Adjacent sections contain different cells.** A 10 µm section and the next 10 µm
-section share no cells at all. So there is no cell-to-cell correspondence to exploit,
-however good your segmentation is.
-
-## The idea: match landmarks, not cells
-
-The way through is to stop trying to match pixels or cells, and instead match **structures
-that both modalities can see independently**.
-
-In spleen, germinal centres (GCs) are close to ideal landmarks:
-
-- they are **discrete** — each one is a compact blob with a clear boundary;
-- there are **many** of them, around 40–50 per section;
-- they are **irregularly scattered**, never in a regular pattern;
-- and crucially, **each modality detects them on its own terms** — GL7 protein staining on
-  the IF side, and a germinal-centre transcriptional cluster on the ST side.
-
-That irregular scatter of ~50 blobs behaves like a **constellation**. Just as a handful of
-stars in an irregular pattern is enough to tell you exactly which way up a star chart
-goes, a scatter of ~50 GCs is a fingerprint specific enough to pin down rotation, mirror
-state and position without ambiguity.
-
-The picture below is the whole argument in one frame. Nine consecutive sections in
-cutting order; IF panels show GL7 (green) and IgD (blue), ST panels show the
-transcriptional GC regions (green). Nobody has aligned anything yet — but you can already
-see the same constellation of GCs in both modalities.
-
-<p align="center"><img src="docs/img/sections.jpg" width="100%"></p>
-
-Note what we are *not* doing: we never give the IF cells an imputed transcriptome, and we
-never claim a cell in one section is the same cell as one in the next. The GC pattern is
-measured twice, independently, and the two measurements are compared. That keeps the
-alignment and the biology from becoming circular.
-
-## How the alignment works, step by step
-
-### Step 0 — one side is held completely still
-
-The ST sections are registered to each other first (we used
-[Spateo](https://github.com/aristoteleo/spateo-release); any method works). From that point
-on those coordinates are **frozen**. This package copies them and never moves them by even
-a pixel.
-
-This matters practically: if you have already curated GC identities on your ST data — for
-example "this blob on section 2 and that blob on section 4 are the same germinal centre" —
-that curation stays valid, because the frame it was defined in never changes. The IF
-sections are fitted *into* that frame, not averaged with it.
-
-### Step 1 — find the right way round
-
-For each IF section, the pipeline tries **every** orientation: both mirror states × all
-rotations in 5° steps, and for each one it slides the section over the ST section (by
-Fourier cross-correlation, which tests all translations at once) and scores the result.
-
-This is brute force on purpose. Rotation-by-180° and mirror-flip are *discrete* choices —
-there is no smooth path from "flipped" to "not flipped" — so an optimiser that follows
-gradients will happily settle into the wrong one. Enumerating a few hundred candidates
-takes seconds and cannot get stuck.
-
-**The candidate is then chosen by the germinal centres, not by the tissue outline.** This
-turned out to be essential. A spleen section is roughly convex, so a mirrored copy of it
-overlaps the original almost perfectly — in our data the wrong mirror scored a tissue
-overlap of 0.928 against the correct one's 0.927, i.e. the tissue shape *preferred the
-wrong answer*. Scoring by how many GC centres land within 150 µm separates them
-immediately: 40 for the correct orientation versus 3–13 for the wrong ones.
-
-A good sanity check falls out of this for free: all five IF sections in our block arrived
-at the same handedness and rotations within 3° of each other, each decided independently.
-
-### Step 2 — correct the stretch
-
-Once a section is the right way round, the remaining error is real physical distortion —
-tissue stretches and compresses as it is picked up. The pipeline pairs each IF germinal
-centre with its counterpart in the ST section and fits a **thin-plate spline**: a smooth
-elastic warp, like gently pressing a rubber sheet so the marked points line up, with no
-sharp local pulling.
-
-How stiff should that sheet be? Too stiff and it cannot correct the real distortion; too
-floppy and it will contort itself to make every GC match perfectly, inventing agreement
-that is not there. The pipeline chooses the stiffness by **leave-one-out
-cross-validation**: repeatedly hide one GC, fit on the rest, and see how well the hidden
-one is predicted. The setting that predicts unseen GCs best is the one that is correcting
-real distortion rather than memorising noise.
-
-In our data this moved GC centres from 25–72 µm apart down to **7–13 µm** — comfortably
-sub-structure, given a GC radius around 110 µm.
-
-### Step 3 — use both neighbours, and keep the disagreement
-
-Every interior IF section sits between two ST sections. The pipeline aligns it to the one
-before **and** to the one after, as two completely independent calculations, then averages
-the two answers weighted by true z distance.
-
-The point is not just the averaging. It is that **the difference between the two answers
-is a free, honest error bar** for that section — an uncertainty estimate that costs no
-extra experiment and makes no assumptions. In our data that disagreement was 32–54 µm.
-
-Sections at the very top and bottom of the stack have a neighbour on one side only, so
-their placement is less certain. The pipeline flags them rather than hiding it.
-
-### The result
-
-Red = ST sections, blue = IF sections, white = where they agree. Every germinal centre has
-a white core with coloured fringes — the fringes are the genuine change in each GC's
-cross-section from one z level to the next, which is exactly what we want to keep.
-
-<p align="center"><img src="docs/img/overlay.jpg" width="62%"></p>
-
-Once each GC carries a single identity across every section, its outlines stack into a
-3D shape.
-
-<p align="center"><img src="docs/img/columns.jpg" width="100%"></p>
-
-The surface is smoothed **in the image volume, not on the mesh**: the stack is blurred and
-the surface drawn through it, which is why the sides look rounded rather than like a
-nine-step staircase. The level at which the surface is drawn is solved so that the
-enclosed volume reproduces the volume actually measured from the sections — so the
-rounding is cosmetic and the number is not. Across 53 GCs the meshes came out within
-**0.9%** of the measured voxel volume, and all 53 were watertight.
-
----
-
-## Two things to be honest about
-
-**Depth is set by your experiment, not by this software.** Nine 10 µm sections span 80 µm.
-A mouse splenic GC is roughly 200–400 µm across. So our reconstructions are **the middle
-slab of each GC, not a whole GC** — the columns are real, but they are not evidence about
-whether GCs are spherical. If you want whole GCs, cut sections further apart (for us,
-about 25 µm spacing would have done it) rather than consecutively. Run `gcalign show` and
-it will print your z span so you can check this before you start.
-
-**GC-driven alignment is a maximum-overlap atlas.** Because the germinal centres are what
-drives the registration, they are nudged towards each other. That is the right choice for
-*showing* 3D shape, and the wrong one for *measuring* GC volume statistically — the
-measurement would partly reflect the alignment. For formal morphometry, re-run with tissue
-morphology leading and the GC term down-weighted, and compare.
-
----
-
-## Using it
-
-### Install
+## Install
 
 ```bash
 git clone https://github.com/Reynold4k/gc-serial-align.git
@@ -225,125 +55,229 @@ cd gc-serial-align
 pip install -e .
 ```
 
-Needs Python 3.9+. Everything is CPU — no GPU required.
+gcalign needs Python 3.9 or later. It runs on a CPU; no GPU is needed.
 
-### Describe your experiment
+## Quick start
 
-One YAML file. The section list is the important part: write your sections in the order
-you cut them and say which is which. Everything else — which ST section flanks each IF
-section, the z coordinate of each plane, which sections are one-sided — is worked out for
-you.
+**1. Describe the experiment in one YAML file.** List the sections in the order in which
+they were cut, and state for each section whether it is IF or ST.
+[`configs/template.yaml`](configs/template.yaml) explains every setting.
 
 ```yaml
 name: my_experiment
 output_dir: ./out
 section_thickness_um: 10.0
 
-sections:
-  - {index: 1, kind: IF, source: 1}
-  - {index: 2, kind: ST, source: D1, name: D1}
+sections:                                  # in cutting order
+  - {index: 1, kind: IF, source: 1}        # IF image: Section1_stitched.czi
+  - {index: 2, kind: ST, source: CHIP_A, name: A}   # ST section labelled CHIP_A in the AnnData
   - {index: 3, kind: IF, source: 3}
-  - {index: 4, kind: ST, source: E3, name: E3}
-  # ... and so on, in cutting order
+  - {index: 4, kind: ST, source: CHIP_B, name: B}
+  - {index: 5, kind: IF, source: 5}
 
 if_images:
-  dir: /path/to/czi/files
-  um_per_px: 0.8286
+  dir: /path/to/if_images
+  filename_template: "Section{index}_stitched.czi"
+  um_per_px: 0.8286                        # pixel size of the IF images
   channels: {0: IgD_AF647, 1: CD4_AF594, 2: GL7_AF488, 3: DAPI}
-  gc_channel: GL7_AF488          # the marker that lights up your structure
+  gc_channel: GL7_AF488                    # the channel that shows the structure
   tissue_channels: {CD4_AF594: 1.0, IgD_AF647: 0.6, GL7_AF488: 0.3}
 
 st_scaffold:
-  h5ad: /path/to/your_registered_st.h5ad
-  coord_key: align_deformable    # where the registered coordinates live
-  gc_id_col: gc_match_curated_final_id
+  h5ad: /path/to/registered_st_sections.h5ad
+  coord_key: align_deformable              # obsm key with the registered coordinates
+  slice_col: slice_name                    # obs column with the section label
+  gc_id_col: gc_id                         # obs column with the structure id (0 = none)
 ```
 
-Two complete, working examples ship with the package:
-[`configs/rep1_mouse_spleen.yaml`](configs/rep1_mouse_spleen.yaml) and
-[`configs/rep2_mouse_spleen.yaml`](configs/rep2_mouse_spleen.yaml). They are the same
-experiment run on two biological replicates, and the differences between them are
-instructive: the second replicate labels its sections with full chip ids rather than
-short ones, its germinal-centre cluster has a different number and colour in its own
-clustering, and one of its sections has a staining gradient that needs
-`tissue_threshold_scale` turned down. All of that is config, not code.
-
-### Run
+**2. Check the inputs.** This command opens every file and reports problems. It writes
+nothing.
 
 ```bash
-gcalign show --config my_experiment.yaml    # check the layout before committing
-gcalign run  --config my_experiment.yaml
+gcalign check --config my_experiment.yaml
 ```
 
-About 25 minutes on one CPU core for nine sections; the orientation search is most of it.
-Stages can be run separately with `--from`, `--to` or `--only` (see `gcalign stages`).
+**3. Run the registration.** Nine sections take about 5 minutes on one CPU and 1 to
+1.5 minutes on five.
 
-### What comes out
+```bash
+gcalign run --config my_experiment.yaml --jobs 0     # --jobs 0 = use all CPUs
+```
 
-| | |
+**4. Look at the result.**
+
+```bash
+gcalign report --config my_experiment.yaml           # writes out/06_figures/report.html
+```
+
+Open `out/05_viewer/gc_columns.html` (the 3D viewer) and `out/06_figures/report.html`
+(the quality report) in a browser.
+
+## What a run produces
+
+| File or folder | Content |
 | --- | --- |
-| `05_viewer/*.html` | the interactive viewer, one self-contained file |
-| `04_columns/gc_column_metrics.csv` | per-GC volume, radius, centroid drift |
-| `03_gc_match/gc_presence_9plane.csv` | which GC appears on which section |
-| `02_global_align/global_transforms.json` | the transform and match quality per section |
-| `validation_report.json`, `SHA256SUMS.txt` | QC numbers and checksums |
+| `05_viewer/*.html` | interactive 3D viewer; one file, no network needed |
+| `06_figures/report.html` | quality report: numbers and figures on one page (`gcalign report`) |
+| `06_figures/*.png` | figures on a black background (`gcalign figures`) |
+| `03_gc_match/section_transforms.json` | the registration of each IF section |
+| `03_gc_match/plane_gc_labels.npz` | the GC id at each pixel of each section, in the common coordinate system |
+| `03_gc_match/if_channels_warped.npz` | the registered IF images at 10 µm per pixel |
+| `03_gc_match/gc_presence.csv` | the area of each GC on each section |
+| `04_columns/gc_column_metrics.csv` | volume, radius and drift of each GC |
+| `validation_report.json` | all quality numbers |
 
-### The viewer
+[docs/outputs.md](docs/outputs.md) describes every file.
 
-<p align="center"><img src="docs/img/viewer_gc.jpg" width="100%"></p>
-<p align="center"><img src="docs/img/viewer_both.jpg" width="100%"></p>
+## Commands
 
-Five views (keys `1`–`5`): the GC columns on their own; the ST sections; the IF sections;
-both stacked together, alternating by modality; and the dark-zone / light-zone view. Click a
-section name to light it up and dim the rest; click a GC to isolate it — every layer filters
-with it. The Z slider exaggerates depth: real scale is 1×, which for an 80 µm stack across
-7 mm of tissue is almost flat, so it defaults to 5×.
+| Command | Purpose |
+| --- | --- |
+| `gcalign show` | print the section layout derived from the config |
+| `gcalign check` | test the input files before a run |
+| `gcalign run` | run the registration |
+| `gcalign figures` | draw the result as PNG figures |
+| `gcalign report` | write the quality report (one HTML page) |
+| `gcalign animate` | render a film of the registration |
+| `gcalign transfer` | read the IF intensity of each channel at every ST bin |
+| `gcalign export` | write an IF section as a registered OME-TIFF image at a chosen pixel size |
+| `gcalign map` | convert point coordinates between an IF image and the ST coordinate system |
 
-Three optional layers appear only if their input file exists, so a plain registration run
-still opens with nothing missing:
+[docs/commands.md](docs/commands.md) describes each command, its options and its output,
+and the Python interface.
 
-- a **B-follicle backdrop** (`follicle_points.npz`) — IgD on the IF planes, the RCTD
-  follicular-B call on the Stereo-seq planes, both in one pale blue so it reads as one
-  structure. A GC column floating in empty space cannot be judged: you cannot tell whether a
-  shift between sections is the GC moving or the registration drifting.
-- the **DZ / LZ view** (`dzlz_points.npz`, `zone_blocks.npz`) — the measured points on all
-  nine planes, or each GC re-cut into one solid dark-zone and one solid light-zone block,
-  switched from the sidebar. They are two readings of the same measurement, which is why they
-  share a view instead of stacking.
-- an **IF photograph panel** (`if_images.json`) — the full-resolution section as a
-  true-colour image with the GC outlines and ids over it; scroll to zoom, drag to pan, Esc to
-  close.
+## Results on our data
 
-Builders for all three are in [`viewer_layers/`](viewer_layers), with the flat per-GC
-close-ups in [`figures_2d/`](figures_2d).
+The figures below are from replicate 1. They are drawn by `gcalign figures`.
+[docs/figures.md](docs/figures.md) explains every figure in detail.
 
-Download the file and open it locally. If dragging feels sluggish it is almost always
-because the browser has fallen back to software rendering — check `chrome://gpu`; viewing
-over X11 forwarding from a cluster is the usual cause.
+### All sections in one coordinate system
 
----
+<p align="center"><img src="docs/img/sections.jpg" width="100%"></p>
 
-## Does it work outside spleen and germinal centres?
+The nine sections after registration, in cutting order. IF sections (blue names) show the
+stain: CD4 red, GL7 green, IgD blue. ST sections (pink names) show the tissue in dark grey
+and each GC in its own colour. A GC has the same colour on every ST section.
 
-The requirement is not "germinal centres". It is: **a class of structure that is discrete,
-reasonably numerous, irregularly arranged, and visible to both modalities on their own
-terms.** Follicles, glomeruli, islets, tumour nests, crypts and granulomas all plausibly
-qualify. Point `gc_channel` at the marker that shows your structure and `gc_id_col` at the
-corresponding transcriptomic label.
+### The orientation is chosen by the GCs, not by the tissue outline
 
-It will not work on tissue with no discrete repeating landmarks, or where only one
-modality can see them.
+<p align="center"><img src="docs/img/orientation.png" width="100%"></p>
 
-## Further reading
+One panel per IF section. Each mark is one tested orientation (mirror state and rotation).
+The x axis is the overlap of the tissue outlines; the y axis is the number of GC centres
+that lie within 150 µm of the matching GC on the ST section. The large blue dot is the
+orientation that was chosen, and the number above it is its rotation angle. A grey dot is
+a rejected orientation that is not mirrored; a grey ring is a rejected orientation that is
+mirrored. The tested orientations differ little in tissue overlap and strongly in the
+number of matching GCs. On two of these five sections a wrong orientation had a slightly
+higher tissue overlap than the correct one.
 
-- [How it works — the mechanism in more detail](docs/how-it-works.md)
-- [Reproducing this work from scratch](docs/reproduce-prompt.md)
+### Matching one IF section to its neighbouring ST sections
 
-## Citing
+<p align="center"><img src="docs/img/gc_matching_topview.webp" width="100%" alt="Film: IF section IF5 of replicate 1 is matched to the ST sections E3 and G4"></p>
 
-If this is useful in published work, please cite the repository and the underlying tools:
-Spateo for the transcriptomics registration, scikit-image, SciPy, PyVista and Plotly.
+IF section IF5 of replicate 1 is matched to the ST sections before and after it (E3 and
+G4). The film shows the 12 iterations of the placement step (iterative closest point,
+ICP) that the pipeline stored, in order, and then the result of the elastic warp. The
+image is the IF stain. Coloured outlines are the GC regions of the two ST sections. A blue
+dot is the centre of a GC on the IF section; a pink ring is the centre of the matching GC
+on the ST sections; a line joins each matched pair. The panel on the right gives the
+number of matched pairs and their mean distance at each iteration.
+
+### Registration error
+
+<p align="center"><img src="docs/img/alignment.png" width="100%"></p>
+
+One row per IF section. From left to right: distance between matched GC centres before
+(ring) and after (arrow head) the elastic warp; leave-one-out error of the warp;
+disagreement between the two neighbouring ST sections; number of GCs used.
+
+| | Replicate 1 | Replicate 2 |
+| --- | --- | --- |
+| Distance between matched GC centres before the elastic warp (median per IF section) | 27–72 µm | 50–96 µm |
+| Distance between matched GC centres after the elastic warp | 6–13 µm | 0.2–24 µm |
+| Leave-one-out error of the elastic warp | 17–29 µm | 18–47 µm |
+| Disagreement between the two neighbouring ST sections | 36–52 µm | 65–76 µm |
+| GCs found in the stack | 58 | 75 |
+| GCs present on all nine sections | 30 | 38 |
+| 3D surfaces built / closed | 53 / 53 | 70 / 70 |
+
+For comparison, the median diameter of a GC cross-section in these sections is 200–250 µm.
+
+### Agreement of the GC regions between IF and ST
+
+<p align="center"><img src="docs/img/overlay.jpg" width="100%"></p>
+
+The GC regions of all nine sections drawn on top of each other. Pink = GC regions from ST
+sections. Blue = GC regions from IF sections. White = both. The right panel enlarges the
+area marked by brackets in the left panel.
+
+### 3D surface of each GC
+
+<p align="center"><img src="docs/img/columns.jpg" width="100%"></p>
+
+The eight largest GCs of replicate 1. Each surface is built from the outlines of one GC on
+the nine sections. Depth is stretched five times.
+
+### The interactive viewer
+
+<p align="center"><img src="docs/img/viewer.jpg" width="100%"></p>
+
+The viewer is one HTML file that opens in a web browser without a network connection.
+The picture shows the view "Columns": the 3D surface of each of the 53 GCs of replicate 1
+that have a surface, each GC in its own colour, and the list of GCs on the left. Other
+views show the outline of each GC on the ST sections, on the IF sections, or on both.
+Clicking a GC shows its volume, radius and cross-section area on every section. A table
+lists the registration quality of each IF section. [docs/viewer.md](docs/viewer.md)
+describes every control.
+
+## Limitations
+
+- **The 3D surfaces cover only part of each GC.** Nine 10 µm sections are 90 µm of tissue.
+  A GC in mouse spleen has a diameter of 200–400 µm. The surfaces show how a GC continues
+  from section to section. They do not show the whole shape of a GC.
+- **The registration maximises the overlap of GCs between sections,** because the GCs are
+  the landmarks. The 3D surfaces are suitable for showing shape. They are not suitable for
+  statistics on GC volume.
+- **The first and the last section of a stack have only one ST neighbour.** Their
+  registration is less certain, and no two-sided error estimate exists for them.
+- **gcalign needs registered ST sections as input.** It does not register ST sections to
+  each other. We used [Spateo](https://github.com/aristoteleo/spateo-release) for that step.
+
+## Use with other tissues and structures
+
+gcalign needs a class of structure that is discrete, numerous, irregularly arranged, and
+detectable separately in IF and in ST. Follicles, glomeruli, islets, tumour nests, crypts
+and granulomas are candidates. Set `gc_channel` to the IF channel that shows the structure
+and `gc_id_col` to the column of the AnnData file that holds the structure id.
+
+gcalign does not work for tissue without such structures, or when only one of the two
+modalities detects them. We have tested it on mouse spleen only.
+
+## Documentation
+
+| Page | Content |
+| --- | --- |
+| [docs/method.md](docs/method.md) | the method, step by step, in plain terms |
+| [docs/how-it-works.md](docs/how-it-works.md) | implementation details of each pipeline stage |
+| [docs/commands.md](docs/commands.md) | every command and the Python interface |
+| [docs/outputs.md](docs/outputs.md) | every output file |
+| [docs/figures.md](docs/figures.md) | what each figure shows |
+| [docs/viewer.md](docs/viewer.md) | the interactive viewer: views, controls, keyboard shortcuts |
+| [docs/theme.md](docs/theme.md) | the colours and the font of all output |
+| [docs/reproduce-prompt.md](docs/reproduce-prompt.md) | steps for your own data; a prompt to rebuild the pipeline with an AI assistant |
+| [films/README.md](films/README.md) | the film: acts, inputs, and what is staged |
+| [viewer_layers/README.md](viewer_layers/README.md) | optional layers of the viewer (B follicles, dark and light zone) |
+| [figures_2d/README.md](figures_2d/README.md) | figures of the dark and light zone of single GCs |
+| [tests/README.md](tests/README.md) | the tests and the synthetic test data |
+| [CHANGELOG.md](CHANGELOG.md) | changes between versions |
+
+## Citation
+
+If you use gcalign in published work, cite this repository and the tools it builds on:
+Spateo (registration of the ST sections), scikit-image, SciPy, PyVista and Plotly.
 
 ## Licence
 
-MIT — see [LICENSE](LICENSE).
+The code is released under the MIT licence ([LICENSE](LICENSE)). The Inter font files in
+`gcalign/assets/fonts` are released under the SIL Open Font License 1.1.

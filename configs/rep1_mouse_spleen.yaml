@@ -1,7 +1,7 @@
 # The experiment this package was built for: mouse spleen, nine consecutive
 # 10 um cryosections, immunofluorescence and Stereo-seq cut alternately.
 #
-# Every path below is specific to our cluster. Copy this file, change the paths
+# The paths below are placeholders. Copy this file, change the paths
 # and the section list, and the pipeline follows your experiment instead.
 
 name: rep1_mouse_spleen
@@ -25,7 +25,7 @@ sections:
 
 # --- the immunofluorescence images -----------------------------------------
 if_images:
-  dir: /data/projects/punim1236/Stereoseqv1.3_IF_images/260709_Stereoseqv1.3_SP_exp1
+  dir: /path/to/if_images/rep1
   filename_template: "Section{index}_stitched.czi"
   um_per_px: 0.8286425781249999
   channels:            # channel index in the CZI -> the marker on it

@@ -20,6 +20,7 @@ from scipy import ndimage as ndi
 from scipy.optimize import linear_sum_assignment
 
 from .config import Config, stage_dir
+from .parallel import run_sections
 
 def load_scaffold(cfg: Config):
     data = np.load(cfg.output_dir / "00_scaffold/st_scaffold.npz", allow_pickle=False)
@@ -144,12 +145,212 @@ def match_pairs(src: np.ndarray, dst: np.ndarray, radius: float):
     return rows[keep], cols[keep], cost[rows[keep], cols[keep]]
 
 
-def run(cfg: Config) -> None:
+MAX_ICP_ITERATIONS = 12
+
+
+def icp_targets(summary: dict, neighbours: list[str]):
+    """The Stereo-seq centroids an IF section is matched against, with their ids.
+
+    Two flanking sections: the consensus centroid of every merged GC. One
+    flanking section (the ends of the stack): that section's own centroids.
+    """
+    points, ids = [], []
+    for row in summary["merged_gc"]:
+        if len(neighbours) == 1:
+            if neighbours[0] not in row["per_slice"]:
+                continue
+            here = row["per_slice"][neighbours[0]]
+            points.append([here["x_um"], here["y_um"]])
+        else:
+            points.append([row["consensus_x_um"], row["consensus_y_um"]])
+        ids.append(row["merged_gc_id"])
+    return np.asarray(points, float).reshape(-1, 2), np.asarray(ids, int)
+
+
+def run_icp(source: np.ndarray, target: np.ndarray, target_ids: np.ndarray,
+            linear: np.ndarray, offset: np.ndarray, radius_um: float):
+    """ICP on GC centroids, keeping every step it takes.
+
+    Returns the final (linear, offset), the per-iteration history - (pairs,
+    mean paired distance) - and the steps as transforms, so the optimisation
+    can be shown or audited afterwards and not only its end point.
+    """
+    history = []
+    steps = [{"iteration": 0, "linear": linear.tolist(), "offset": offset.tolist()}]
+    for index in range(MAX_ICP_ITERATIONS):
+        moved = source @ linear.T + offset
+        rows, cols, dists = match_pairs(moved, target, radius_um)
+        if len(rows) < 6:
+            break
+        rot_i, scale_i, trans_i = similarity_from_pairs(moved[rows], target[cols])
+        linear = scale_i * rot_i @ linear
+        offset = scale_i * rot_i @ offset + trans_i
+        history.append((int(len(rows)), float(dists.mean())))
+        steps.append({
+            "iteration": index + 1,
+            "linear": linear.tolist(), "offset": offset.tolist(),
+            "matched_if_index": rows.tolist(),
+            "matched_gc_id": target_ids[cols].astype(int).tolist(),
+            "target_points_um": target[cols].tolist(),
+            "mean_distance_before_update_um": float(dists.mean()),
+        })
+    return linear, offset, history, steps
+
+
+def stage_a_start(centre_rc, angle_deg: float, scale: float, flip: bool,
+                  dy: int, dx: int, grid_um: float, x0: float, y0: float, shape):
+    """The similarity transform a (mirror, angle, scale, shift) candidate stands for."""
+    theta = np.deg2rad(angle_deg)
+    rot = np.array([[np.cos(theta), np.sin(theta)], [-np.sin(theta), np.cos(theta)]])
+    mirror = np.diag([-1.0, 1.0]) if flip else np.eye(2)
+    linear = scale * rot @ mirror
+    centre_um = np.array([centre_rc[1] * grid_um, centre_rc[0] * grid_um])
+    grid_centre = np.array([x0 + shape[1] / 2 * grid_um, y0 + shape[0] / 2 * grid_um])
+    offset = grid_centre + np.array([dx * grid_um, dy * grid_um]) - linear @ centre_um
+    return linear, offset
+
+
+def align_section(cfg: Config, name: str, shared: dict):
+    """Place one IF section. Independent of every other section, so it can run
+    in its own process."""
+    GRID_UM = cfg.grid_um
+    x0, y0, shape = shared["x0"], shared["y0"], shared["shape"]
+    neighbours = cfg.neighbours[cfg.section(name).index]
+    data = np.load(cfg.output_dir / f"01_if_gc/{name}_gc.npz")
+    tissue, gc = data["tissue"], data["gc"]
+    centre = ndi.center_of_mass(tissue)
+
+    target_tissue = np.logical_or.reduce([shared["st_tissue"][s] for s in neighbours])
+    target_gc = np.logical_or.reduce([shared["st_gc"][s] for s in neighbours])
+
+    # --- A1 exhaustive orientation search on tissue, 40 um pyramid ----
+    # Keep several candidates: a near-convex section overlaps well under the
+    # wrong mirror too, so tissue Dice alone picks the wrong branch.
+    coarse = Correlator(target_tissue, factor=4)
+    coarse_target = shrink(target_tissue, 4)
+    scored = []
+    for flip in (False, True):
+        for angle in range(0, 360, cfg.align.coarse_angle_step_deg):
+            moved = place(tissue, centre, shape, angle, 1.0, flip)
+            dy, dx, _ = coarse.best_shift(moved)
+            score = dice(np.roll(shrink(moved, 4), (dy // 4, dx // 4), axis=(0, 1)),
+                         coarse_target)
+            scored.append((score, flip, float(angle)))
+    scored.sort(key=lambda item: -item[0])
+    candidates, seen = [], []
+    for score, flip, angle in scored:
+        if any(f == flip and min(abs(angle - a), 360 - abs(angle - a)) < 25 for _, f, a in seen):
+            continue
+        seen.append((score, flip, angle))
+        candidates.append((score, flip, angle))
+        if len(candidates) == cfg.align.n_orientation_candidates:
+            break
+    print(f"{name}  A1 candidates: "
+          + ", ".join(f"{'M' if f else 'N'}{a:.0f}({d:.3f})" for d, f, a in candidates),
+          flush=True)
+
+    fine = Correlator(target_tissue, factor=2)
+    fine_target = shrink(target_tissue, 2)
+    labels, _ = ndi.label(gc)
+    props = ndi.center_of_mass(gc, labels, np.arange(1, labels.max() + 1))
+    if_centroids = np.array([[c * GRID_UM, r * GRID_UM] for r, c in props]).reshape(-1, 2)
+    areas = np.bincount(labels.ravel())[1:] * GRID_UM ** 2
+
+    target_pts, target_ids = icp_targets(shared["summary"], neighbours)
+
+    winner = None
+    searched = []
+    for coarse_dice, flip, angle0 in candidates:
+        # --- A2 local rotation / scale refinement, 20 um pyramid ------
+        best = (-1.0, flip, angle0, 1.0, 0, 0)
+        for angle in np.arange(angle0 - 6, angle0 + 6.01, 1.0):
+            for scale in np.arange(*cfg.align.scale_search):
+                moved = place(tissue, centre, shape, float(angle), float(scale), flip)
+                dy, dx, _ = fine.best_shift(moved)
+                score = dice(np.roll(shrink(moved, 2), (dy // 2, dx // 2), axis=(0, 1)),
+                             fine_target)
+                if score > best[0]:
+                    best = (score, flip, float(angle), float(scale), dy, dx)
+        tissue_dice, flip_b, angle, scale, dy, dx = best
+        linear, offset = stage_a_start(centre, angle, scale, flip_b, dy, dx,
+                                       GRID_UM, x0, y0, shape)
+
+        # --- A3 ICP on GC centroids -----------------------------------
+        linear, offset, history, steps = run_icp(
+            if_centroids, target_pts, target_ids, linear, offset,
+            cfg.align.icp_match_radius_um)
+        moved_pts = if_centroids @ linear.T + offset
+        rows, cols, dists = match_pairs(moved_pts, target_pts, cfg.align.icp_match_radius_um)
+        # the decision metric is GC agreement, not tissue overlap
+        close = int((dists < cfg.align.close_match_um).sum()) if len(rows) else 0
+        searched.append({
+            "flip": bool(flip_b), "coarse_angle_deg": float(angle0),
+            "coarse_tissue_dice": float(coarse_dice),
+            "angle_deg": float(angle), "scale": float(scale),
+            "tissue_dice": float(tissue_dice),
+            "n_matched": int(len(rows)), "n_close": int(close),
+            "median_um": float(np.median(dists)) if len(rows) else None,
+        })
+        if winner is None or close > winner[0]:
+            winner = (close, tissue_dice, bool(flip_b), float(angle), float(scale),
+                      linear, offset, rows, cols, dists, history, steps, len(searched) - 1)
+        print(f"{name}    cand {'M' if flip_b else 'N'}{angle0:.0f}: "
+              f"tissue {tissue_dice:.3f}, matched {len(rows)}, "
+              f"<{cfg.align.close_match_um:.0f}um {close}, "
+              f"median {np.median(dists):.0f} um" if len(rows) else
+              f"{name}    cand {'M' if flip_b else 'N'}{angle0:.0f}: no match", flush=True)
+
+    (close, tissue_dice, flip, angle, scale, linear, offset,
+     rows, cols, dists, history, steps, winner_index) = winner
+
+    warped_gc = warp_mask(cfg, gc, linear, offset, x0, y0, shape)
+    gc_dice = dice(warped_gc, target_gc)
+    warped_tissue = warp_mask(cfg, tissue, linear, offset, x0, y0, shape)
+    tissue_dice_final = dice(warped_tissue, target_tissue)
+
+    result = {
+        "section": cfg.section(name).index,
+        "neighbours": neighbours,
+        "flip": bool(flip), "angle_deg": float(angle), "scale_a2": float(scale),
+        "linear": linear.tolist(), "offset": offset.tolist(),
+        "total_scale": float(np.sqrt(abs(np.linalg.det(linear)))),
+        "tissue_dice_a2": float(tissue_dice),
+        "tissue_dice_final": float(tissue_dice_final),
+        "gc_dice_final": float(gc_dice),
+        "n_matched_under_150um": int(close),
+        "n_if_gc": int(len(if_centroids)),
+        "n_matched": int(len(rows)),
+        "match_rms_um": float(np.sqrt((dists ** 2).mean())) if len(rows) else None,
+        "match_median_um": float(np.median(dists)) if len(rows) else None,
+        "icp_history": history,
+        "if_centroids_um": if_centroids.tolist(),
+        "if_areas_um2": areas.tolist(),
+        "matched_if_index": rows.tolist(),
+        "matched_merged_gc_id": target_ids[cols].astype(int).tolist(),
+        "matched_distance_um": dists.tolist(),
+    }
+    trajectory = {
+        "source_centroids_um": if_centroids.tolist(),
+        "steps": steps,
+        "n_iterations": len(history),
+        "origin": "stored by stage align",
+    }
+    search = {"winner": int(winner_index), "candidates": searched}
+    if len(rows):
+        print(f"{name}  WON {'mirror' if flip else 'direct'} {angle:.1f} deg scale {scale:.3f} | "
+              f"matched {len(rows)}/{len(if_centroids)} ({close} under "
+              f"{cfg.align.close_match_um:.0f} um), "
+              f"median {np.median(dists):.0f} um | tissue dice {tissue_dice_final:.3f}, "
+              f"GC dice {gc_dice:.3f}\n", flush=True)
+    else:
+        print(f"{name}  no orientation matched any germinal centre\n", flush=True)
+    return name, result, trajectory, search
+
+
+def run(cfg: Config, jobs: int = 1) -> None:
     OUT = stage_dir(cfg, "02_global_align")
     GRID_UM = cfg.grid_um
-    IF_SECTIONS = [s.index for s in cfg.if_sections]
     ST_SLICES = cfg.st_names
-    NEIGHBOURS = cfg.neighbours
     slice_short, gc_id, world = load_scaffold(cfg)
     x0, y0, height, width = world_grid(cfg, world)
     shape = (height, width)
@@ -160,150 +361,37 @@ def run(cfg: Config) -> None:
     st_tissue_all = np.logical_or.reduce(list(st_tissue.values()))
 
     summary = json.loads((cfg.output_dir / "00_scaffold/st_scaffold_summary.json").read_text())
-    consensus = np.array([[r["consensus_x_um"], r["consensus_y_um"]] for r in summary["merged_gc"]])
-    consensus_id = np.array([r["merged_gc_id"] for r in summary["merged_gc"]])
-    per_slice_centroid = {
-        s: {r["merged_gc_id"]: (r["per_slice"][s]["x_um"], r["per_slice"][s]["y_um"])
-            for r in summary["merged_gc"] if s in r["per_slice"]}
-        for s in ST_SLICES
-    }
+    shared = {"x0": x0, "y0": y0, "shape": shape, "st_tissue": st_tissue, "st_gc": st_gc,
+              "summary": summary}
 
-    results = {}
-    for section in IF_SECTIONS:
-        data = np.load(cfg.output_dir / f"01_if_gc/IF{section}_gc.npz")
-        tissue, gc = data["tissue"], data["gc"]
-        centre = ndi.center_of_mass(tissue)
+    results, trajectories, searches = {}, {}, {}
+    for name, result, trajectory, search in run_sections(
+            align_section, [(cfg, name, shared) for name in cfg.if_names], jobs):
+        results[name] = result
+        trajectories[name] = trajectory
+        searches[name] = search
 
-        target_tissue = np.logical_or.reduce([st_tissue[s] for s in NEIGHBOURS[section]])
-        target_gc = np.logical_or.reduce([st_gc[s] for s in NEIGHBOURS[section]])
-
-        # --- A1 exhaustive orientation search on tissue, 40 um pyramid ----
-        # Keep several candidates: a near-convex section overlaps well under the
-        # wrong mirror too, so tissue Dice alone picks the wrong branch (IF9).
-        coarse = Correlator(target_tissue, factor=4)
-        coarse_target = shrink(target_tissue, 4)
-        scored = []
-        for flip in (False, True):
-            for angle in range(0, 360, cfg.align.coarse_angle_step_deg):
-                moved = place(tissue, centre, shape, angle, 1.0, flip)
-                dy, dx, _ = coarse.best_shift(moved)
-                score = dice(np.roll(shrink(moved, 4), (dy // 4, dx // 4), axis=(0, 1)),
-                             coarse_target)
-                scored.append((score, flip, float(angle)))
-        scored.sort(key=lambda item: -item[0])
-        candidates, seen = [], []
-        for score, flip, angle in scored:
-            if any(f == flip and min(abs(angle - a), 360 - abs(angle - a)) < 25 for _, f, a in seen):
-                continue
-            seen.append((score, flip, angle))
-            candidates.append((score, flip, angle))
-            if len(candidates) == cfg.align.n_orientation_candidates:
-                break
-        print(f"IF{section}  A1 candidates: "
-              + ", ".join(f"{'M' if f else 'N'}{a:.0f}({d:.3f})" for d, f, a in candidates),
-              flush=True)
-
-        fine = Correlator(target_tissue, factor=2)
-        fine_target = shrink(target_tissue, 2)
-        labels, _ = ndi.label(gc)
-        props = ndi.center_of_mass(gc, labels, np.arange(1, labels.max() + 1))
-        if_centroids = np.array([[c * GRID_UM, r * GRID_UM] for r, c in props])
-        areas = np.bincount(labels.ravel())[1:] * GRID_UM ** 2
-
-        target_pts = consensus
-        target_ids = consensus_id
-        if len(NEIGHBOURS[section]) == 1:
-            table = per_slice_centroid[NEIGHBOURS[section][0]]
-            target_ids = np.array([i for i in consensus_id if i in table])
-            target_pts = np.array([table[i] for i in target_ids])
-
-        winner = None
-        for _, flip, angle0 in candidates:
-            # --- A2 local rotation / scale refinement, 20 um pyramid ------
-            best = (-1.0, flip, angle0, 1.0, 0, 0)
-            for angle in np.arange(angle0 - 6, angle0 + 6.01, 1.0):
-                for scale in np.arange(*cfg.align.scale_search):
-                    moved = place(tissue, centre, shape, float(angle), float(scale), flip)
-                    dy, dx, _ = fine.best_shift(moved)
-                    score = dice(np.roll(shrink(moved, 2), (dy // 2, dx // 2), axis=(0, 1)),
-                                 fine_target)
-                    if score > best[0]:
-                        best = (score, flip, float(angle), float(scale), dy, dx)
-            tissue_dice, flip_b, angle, scale, dy, dx = best
-
-            theta = np.deg2rad(angle)
-            rot = np.array([[np.cos(theta), np.sin(theta)], [-np.sin(theta), np.cos(theta)]])
-            mirror = np.diag([-1.0, 1.0]) if flip_b else np.eye(2)
-            linear = scale * rot @ mirror
-            centre_um = np.array([centre[1] * GRID_UM, centre[0] * GRID_UM])
-            grid_centre = np.array([x0 + shape[1] / 2 * GRID_UM, y0 + shape[0] / 2 * GRID_UM])
-            offset = grid_centre + np.array([dx * GRID_UM, dy * GRID_UM]) - linear @ centre_um
-
-            # --- A3 ICP on GC centroids -----------------------------------
-            history = []
-            for _ in range(12):
-                moved_pts = if_centroids @ linear.T + offset
-                rows, cols, dists = match_pairs(moved_pts, target_pts, cfg.align.icp_match_radius_um)
-                if len(rows) < 6:
-                    break
-                rot_i, scale_i, trans_i = similarity_from_pairs(moved_pts[rows], target_pts[cols])
-                linear = scale_i * rot_i @ linear
-                offset = scale_i * rot_i @ offset + trans_i
-                history.append((int(len(rows)), float(dists.mean())))
-            moved_pts = if_centroids @ linear.T + offset
-            rows, cols, dists = match_pairs(moved_pts, target_pts, cfg.align.icp_match_radius_um)
-            # the decision metric is GC agreement, not tissue overlap
-            close = int((dists < cfg.align.close_match_um).sum()) if len(rows) else 0
-            if winner is None or close > winner[0]:
-                winner = (close, tissue_dice, bool(flip_b), float(angle), float(scale),
-                          linear, offset, rows, cols, dists, history)
-            print(f"IF{section}    cand {'M' if flip_b else 'N'}{angle0:.0f}: "
-                  f"tissue {tissue_dice:.3f}, matched {len(rows)}, <150um {close}, "
-                  f"median {np.median(dists):.0f} um" if len(rows) else
-                  f"IF{section}    cand {'M' if flip_b else 'N'}{angle0:.0f}: no match", flush=True)
-
-        (close, tissue_dice, flip, angle, scale, linear, offset,
-         rows, cols, dists, history) = winner
-
-        warped_gc = warp_mask(cfg, gc, linear, offset, x0, y0, shape)
-        gc_dice = dice(warped_gc, target_gc)
-        warped_tissue = warp_mask(cfg, tissue, linear, offset, x0, y0, shape)
-        tissue_dice_final = dice(warped_tissue, target_tissue)
-
-        results[f"IF{section}"] = {
-            "section": section,
-            "neighbours": NEIGHBOURS[section],
-            "flip": bool(flip), "angle_deg": float(angle), "scale_a2": float(scale),
-            "linear": linear.tolist(), "offset": offset.tolist(),
-            "total_scale": float(np.sqrt(abs(np.linalg.det(linear)))),
-            "tissue_dice_a2": float(tissue_dice),
-            "tissue_dice_final": float(tissue_dice_final),
-            "gc_dice_final": float(gc_dice),
-            "n_matched_under_150um": int(close),
-            "n_if_gc": int(len(if_centroids)),
-            "n_matched": int(len(rows)),
-            "match_rms_um": float(np.sqrt((dists ** 2).mean())) if len(rows) else None,
-            "match_median_um": float(np.median(dists)) if len(rows) else None,
-            "icp_history": history,
-            "if_centroids_um": if_centroids.tolist(),
-            "if_areas_um2": areas.tolist(),
-            "matched_if_index": rows.tolist(),
-            "matched_merged_gc_id": target_ids[cols].astype(int).tolist(),
-            "matched_distance_um": dists.tolist(),
-        }
-        print(f"IF{section}  WON {'mirror' if flip else 'direct'} {angle:.1f} deg scale {scale:.3f} | "
-              f"matched {len(rows)}/{len(if_centroids)} ({close} under 150 um), "
-              f"median {np.median(dists):.0f} um | tissue dice {tissue_dice_final:.3f}, "
-              f"GC dice {gc_dice:.3f}\n", flush=True)
+    unmatched = [name for name, r in results.items() if r["n_matched"] < 6]
+    if unmatched:
+        raise RuntimeError(
+            f"fewer than six germinal centres could be matched on {unmatched}. The registration "
+            "is driven by matched structures, so it cannot continue. Check that `gc_channel` "
+            "is the marker that shows the structure, that the sections are listed in cutting "
+            "order, and look at 01_if_gc/*_gc_mask.tif - a tissue outline that lost part of "
+            "the section (see `tissue_threshold_scale`) takes its structures with it.")
 
     (OUT / "global_transforms.json").write_text(json.dumps({
         "grid": {"um_per_px": GRID_UM, "x0_um": x0, "y0_um": y0,
                  "height": height, "width": width},
         "sections": results,
     }, indent=2))
+    # how the answer was reached: the ICP as steps, and every orientation
+    # candidate with both of its scores
+    (OUT / "icp_trajectory.json").write_text(json.dumps(trajectories))
+    (OUT / "orientation_search.json").write_text(json.dumps({
+        "close_match_um": cfg.align.close_match_um, "sections": searches}, indent=2))
     np.savez_compressed(OUT / "st_rasters.npz",
                         **{f"tissue_{s}": st_tissue[s] for s in ST_SLICES},
                         **{f"gc_{s}": st_gc[s] for s in ST_SLICES},
                         tissue_all=st_tissue_all)
     print("wrote", OUT / "global_transforms.json")
-

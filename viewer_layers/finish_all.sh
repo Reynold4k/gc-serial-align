@@ -1,40 +1,50 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# Build every optional viewer layer for one finished gcalign run, then rewrite its viewer.
+#
+# Usage:
+#   viewer_layers/finish_all.sh CONFIG.yaml RCTD_WEIGHTS_DIR [--output-dir RUN_DIR]
+#
+# Set in the environment:
+#   FOLLICLE_CHANNEL  IF channel that marks the B-cell follicle (for example IgD_AF647)
+#   ZONE_CHANNEL      IF channel that is high in the GC light zone (for example CD4_AF594)
+#   WEIGHTS_PATTERN   file-name pattern of one ST section's RCTD table, {source} = its chip id
+#                     (default "*{source}*.csv*")
+#   PYTHON            interpreter with gcalign's dependencies (default: python3)
+#
+# It writes, inside the run directory:
+#   05_viewer/follicle_points.npz   B-cell follicle points          (build_follicle_layer.py)
+#   05_viewer/dzlz_points.npz       dark-zone / light-zone points   (build_dzlz_layer.py)
+#   04_columns/zone_blocks.npz      dark-zone / light-zone solids   (build_zone_blocks.py)
+#   05_viewer/if_images.json        IF images with GC outlines      (build_if_images.py)
+#   05_viewer/<viewer>.html         the viewer, rebuilt with all of the above
 set -euo pipefail
-W=/path/to/rctd_work
-S9=/path/to/nine_section_output
-D=/path/to/viewer_bundle
-G=$S9/gc-serial-align
-PY=/path/to/spateo-env/bin/python
-cd "$W"
-echo "########## 1. four-slice RCTD HTMLs"
-for r in rep1 rep2; do
-  python3 build_rctd_four_slice.py --rep $r --weights weights --out ${r}_four_slice_rctd.html 2>&1 \
-    | grep -E "spots \(|wrote|joined" | sed "s/^/  [$r] /"
-done
-echo "########## 2. nine-slice follicle point clouds"
-for r in rep1 rep2; do
-  python3 build_follicle_layer.py --rep $r --weights weights --out "$S9/$r/05_viewer/follicle_points.npz" 2>&1 \
-    | tail -2 | sed "s/^/  [$r] /"
-done
-echo "########## 3. nine-slice DZ/LZ blocks"
-for r in rep1 rep2; do
-  $PY build_zone_blocks.py --rep $r --weights weights --out "$S9/$r/04_columns" 2>&1 \
-    | tail -2 | sed "s/^/  [$r] /"
-done
-echo "########## 4. regenerate nine-slice viewers"
-cd "$G"
-sed 's|^output_dir: ./out/rep1|output_dir: '"$S9"'/rep1|' configs/rep1_mouse_spleen.yaml > /tmp/rep1_local.yaml
-for r in rep1 rep2; do
-  CFG=configs/${r}_mouse_spleen.yaml; [ "$r" = rep1 ] && CFG=/tmp/rep1_local.yaml
-  $PY -c "
-import sys; sys.path.insert(0,'.')
-from gcalign import cli
-sys.argv=['gcalign','run','--config','$CFG','--only','viewer']
-cli.main()" 2>&1 | grep -E "follicle backdrop|wrote" | sed "s/^/  [$r] /"
-done
-echo "########## 5. deploy"
-cp "$W/rep1_four_slice_rctd.html" "$W/rep2_four_slice_rctd.html" "$D/viewers/"
-cp "$S9/rep1/05_viewer/nine_slice_gc_columns_rep1.html" "$D/viewers/rep1_nine_slice_columns.html"
-cp "$S9/rep2/05_viewer/nine_slice_gc_columns_rep2.html" "$D/viewers/rep2_nine_slice_columns.html"
-ls -la "$D/viewers/" | awk '{printf "  %8s  %s\n",$5,$9}' | grep html
-echo "DONE"
+
+if [ $# -lt 2 ]; then
+  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+  exit 2
+fi
+CONFIG=$1
+WEIGHTS=$2
+shift 2
+EXTRA=("$@")                      # passed to every step, e.g. --output-dir RUN_DIR
+
+: "${FOLLICLE_CHANNEL:?set FOLLICLE_CHANNEL to the IF channel that marks the B-cell follicle}"
+: "${ZONE_CHANNEL:?set ZONE_CHANNEL to the IF channel that is high in the light zone}"
+PATTERN=${WEIGHTS_PATTERN:-"*{source}*.csv*"}
+PY=${PYTHON:-python3}
+HERE=$(cd "$(dirname "$0")" && pwd)
+export PYTHONPATH="$HERE/..${PYTHONPATH:+:$PYTHONPATH}"   # the gcalign next to this folder
+
+echo "== 1/5 B-cell follicle points"
+"$PY" "$HERE/build_follicle_layer.py" --config "$CONFIG" --weights "$WEIGHTS" \
+  --weights-pattern "$PATTERN" --follicle-channel "$FOLLICLE_CHANNEL" ${EXTRA[@]+"${EXTRA[@]}"}
+echo "== 2/5 dark-zone / light-zone points"
+"$PY" "$HERE/build_dzlz_layer.py" --config "$CONFIG" --weights "$WEIGHTS" \
+  --weights-pattern "$PATTERN" --zone-channel "$ZONE_CHANNEL" ${EXTRA[@]+"${EXTRA[@]}"}
+echo "== 3/5 dark-zone / light-zone solids"
+"$PY" "$HERE/build_zone_blocks.py" --config "$CONFIG" --weights "$WEIGHTS" \
+  --weights-pattern "$PATTERN" --zone-channel "$ZONE_CHANNEL" ${EXTRA[@]+"${EXTRA[@]}"}
+echo "== 4/5 IF images"
+"$PY" "$HERE/build_if_images.py" --config "$CONFIG" ${EXTRA[@]+"${EXTRA[@]}"}
+echo "== 5/5 viewer"
+"$PY" -m gcalign.cli run --config "$CONFIG" --only viewer ${EXTRA[@]+"${EXTRA[@]}"}

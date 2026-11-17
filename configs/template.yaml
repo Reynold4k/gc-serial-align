@@ -1,0 +1,90 @@
+# Every setting gcalign understands, with its default.
+# Only the first block is required; delete anything you do not need to change.
+# Check a config before running it:   gcalign check --config my_experiment.yaml
+
+name: my_experiment
+output_dir: ./out                 # relative paths are relative to where you run gcalign
+
+# --- the sections, in the order you cut them --------------------------------
+# index   the cryostat section number. Depth follows it: section 5 lies
+#         (5 - first) x section_thickness_um below the first one, so a section
+#         that was cut but not kept is simply left out of the list.
+# kind    IF = immunofluorescence, ST = spatial transcriptomics
+# source  IF: goes into the image filename (see filename_template)
+#         ST: the label of this section inside the AnnData (st_scaffold.slice_col)
+# name    the label shown everywhere; defaults to IF<index> or the ST source
+section_thickness_um: 10.0
+sections:
+  - {index: 1, kind: IF, source: 1}
+  - {index: 2, kind: ST, source: CHIP_A, name: A}
+  - {index: 3, kind: IF, source: 3}
+  - {index: 4, kind: ST, source: CHIP_B, name: B}
+  - {index: 5, kind: IF, source: 5}
+
+# --- the immunofluorescence images -------------------------------------------
+if_images:
+  dir: /path/to/if_images
+  filename_template: "Section{index}_stitched.czi"   # may also use {source} and {name}
+  reader: auto                    # auto (by extension) | czi | tiff (plain or OME, pyramidal or not)
+  um_per_px: 0.8286               # pixel size of the image; `gcalign check` compares it with the file
+  channels:                       # channel index in the file -> the marker on it
+    0: IgD_AF647
+    1: CD4_AF594
+    2: GL7_AF488
+    3: DAPI
+  gc_channel: GL7_AF488           # the marker that lights up the structure you align on
+  tissue_channels:                # weights for cutting the section outline
+    CD4_AF594: 1.0
+    IgD_AF647: 0.6
+    GL7_AF488: 0.3
+  min_gc_px: 30                   # smallest structure kept, in grid pixels
+  tissue_threshold_scale: 1.0     # lower (~0.6) if a staining gradient loses part of a section
+  # display_rgb: [CD4_AF594, GL7_AF488, IgD_AF647]   # red, green, blue in every picture;
+  #                                 default: by fluorophore (594 red, 488 green, 647 blue)
+
+# --- the already-registered spatial transcriptomics ----------------------------
+st_scaffold:
+  h5ad: /path/to/registered_sections.h5ad
+  coord_key: align_deformable     # obsm key with the registered coordinates (never modified)
+  slice_col: slice_short          # obs column naming each section
+  gc_id_col: gc_match_curated_final_id   # obs column: integer structure id, 0 = none
+  cluster_col: leiden_merged      # optional, carried along
+  dnb_um: 0.5                     # micrometres per coordinate unit
+
+# --- registration --------------------------------------------------------------
+align:
+  grid_um: 10.0                   # common pixel size; set it to your ST bin size
+  margin_px: 45
+  coarse_angle_step_deg: 5        # orientation search: both mirror states x every 5 degrees
+  n_orientation_candidates: 6     # candidates carried through refinement and ICP
+  scale_search: [0.94, 1.06, 0.02]
+  icp_match_radius_um: 420.0
+  warp_match_radius_um: 260.0
+  close_match_um: 150.0           # "close" when choosing the orientation by structure agreement
+  tps_smoothing_grid: [1.0e+2, 1.0e+3, 3.0e+3, 1.0e+4, 3.0e+4, 1.0e+5, 3.0e+5, 1.0e+6, 3.0e+6]
+  split_touching_gcs: true        # split an IF object that two ST structures sit under
+  split_min_frac: 0.06
+  split_min_px: 30
+
+# --- 3D columns ----------------------------------------------------------------
+columns:
+  z_oversample: 4
+  sigma_xy_px: 1.8
+  sigma_z_sub: 5.0
+  target_faces: 700
+  shell_faces: 300
+  pad_z: 3
+  pad_xy: 8
+  min_planes: 2
+  min_px_per_plane: 8
+
+# --- viewer --------------------------------------------------------------------
+viewer:
+  title: GC columns
+  subtitle: ""
+  filename: gc_columns.html
+  palette: aurora                 # aurora (even lightness, default) | hsv (the 0.1 palette)
+  st_hex: "#FF1493"               # base colour of the ST plane family
+  if_hex: "#0F52BA"               # base colour of the IF plane family
+  default_z_exaggeration: 5
+  slab_half_um: 2.0

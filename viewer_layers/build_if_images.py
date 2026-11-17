@@ -1,97 +1,117 @@
 #!/usr/bin/env python3
-"""Full-resolution true-colour IF composites for the nine-slice viewer panel.
+"""Build the immunofluorescence images for the viewer's image panel (05_viewer/if_images.json).
 
-Red = CD4 (AF594), green = GL7 (AF488), blue = IgD (AF647) — the ordinary dye
-colours, and the same convention as the single-GC close-up figures. Contrast
-limits are shared across the five IF sections of a replicate so brightness is
-comparable between them.
+For each immunofluorescence (IF) section, this writes a true-colour JPEG of the
+section as warped onto the common grid, plus the outline and the id of every
+registered germinal centre (GC) in image pixel coordinates. The viewer shows the
+image with the outlines drawn on top.
 
-Also emits, per plane, the outline of every registered GC in image pixel
-coordinates so the panel can draw boundaries and ids over the photograph.
+The red, green and blue bands are the config's display channels
+(`if_images.display_rgb`, or the fluorophores in the channel names when that is
+unset; see `gcalign.config.Config.rgb_channels`). The contrast limits of each
+channel are one pair of percentiles shared by all IF sections, so brightness can
+be compared from one section to the next.
+
+Example:
+    python viewer_layers/build_if_images.py --config my_experiment.yaml
 """
 from __future__ import annotations
-import argparse, base64, io, json
+
+import base64
+import io
+import json
 from pathlib import Path
+
 import numpy as np
 from PIL import Image
 from skimage import measure
 
-CH = [("CD4_AF594", "R"), ("GL7_AF488", "G"), ("IgD_AF647", "B")]
-LO_P, HI_P, JPEG_Q = 1.0, 99.7, 88
-REPS = {"rep1": "/path/to/nine_section_output/rep1",
-        "rep2": "/path/to/nine_section_output/rep2"}
-IF_PLANES = ["IF1", "IF3", "IF5", "IF7", "IF9"]
+import layer_common as common
 
 
-def main(rep, out):
-    root = Path(REPS[rep])
-    ch = np.load(root / "03_gc_match/if_channels_warped.npz")
-    lab = np.load(root / "03_gc_match/plane_gc_labels.npz")
-    x0, y0, H, W = [float(v) for v in lab["grid"]]
+def main(argv=None) -> int:
+    ap = common.parser(__doc__.split("\n")[0])
+    ap.add_argument("--low", type=float, default=1.0,
+                    help="lower contrast limit of each channel, as a percentile of its non-zero pixels. Default: %(default)s")
+    ap.add_argument("--high", type=float, default=99.7,
+                    help="upper contrast limit of each channel, as a percentile. Default: %(default)s")
+    ap.add_argument("--stride", type=int, default=7,
+                    help="use every n-th pixel when computing the limits. Default: %(default)s")
+    ap.add_argument("--quality", type=int, default=88, help="JPEG quality, 1-95. Default: %(default)s")
+    ap.add_argument("--min-gc-px", type=int, default=25,
+                    help="smallest GC cross-section that gets an outline and an id, in grid pixels. Default: %(default)s")
+    ap.add_argument("--out", type=Path, default=None, help="output file. Default: <run>/05_viewer/if_images.json")
+    args = ap.parse_args(argv)
 
-    # shared contrast limits per channel across the five sections
-    lim = {}
-    for name, _ in CH:
-        pool = np.concatenate([ch[f"{p}|{name}"][ch[f"{p}|{name}"] > 0].ravel()[::7]
-                               for p in IF_PLANES])
-        lim[name] = (float(np.percentile(pool, LO_P)), float(np.percentile(pool, HI_P)))
-        print(f"  {name}: shared limits {lim[name][0]:.0f} – {lim[name][1]:.0f}")
+    run = common.open_run(args)
+    cfg = run.cfg
+    names = run.if_names
+    if not names:
+        raise SystemExit("the run has no IF section")
+    rgb = list(cfg.rgb_channels)                                   # [red, green, blue]; None = black band
+    out = args.out or run.root / "05_viewer" / "if_images.json"
 
-    payload, total = [], 0
-    for p in IF_PLANES:
-        planes = []
-        for name, _ in CH:
-            a = ch[f"{p}|{name}"].astype(np.float32)
-            lo, hi = lim[name]
-            planes.append(np.clip((a - lo) / max(hi - lo, 1e-6), 0, 1))
-        rgb = (np.dstack(planes) * 255).astype(np.uint8)
-        buf = io.BytesIO()
-        Image.fromarray(rgb).save(buf, "JPEG", quality=JPEG_Q, optimize=True)
-        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-        total += len(b64)
+    limits = {}
+    for channel in rgb:
+        if channel is None:
+            continue
+        pieces = []
+        for n in names:
+            values = run.channel(n, channel)                       # each read decompresses; read once
+            pieces.append(values[values > 0].ravel()[::args.stride])
+        pool = np.concatenate(pieces)
+        if pool.size == 0:
+            pool = np.zeros(1)
+        limits[channel] = (float(np.percentile(pool, args.low)), float(np.percentile(pool, args.high)))
+        print(f"  {channel}: contrast limits {limits[channel][0]:.0f} - {limits[channel][1]:.0f}, shared by "
+              f"{len(names)} sections")
 
-        # GC outlines in image pixel coordinates
-        L = lab[p]
-        outlines = []
-        for gid in np.unique(L):
+    planes, total = [], 0
+    for name in names:
+        bands = []
+        for channel in rgb:
+            if channel is None:
+                bands.append(np.zeros(run.grid.shape, np.float32))
+                continue
+            values = run.channel(name, channel).astype(np.float32)
+            lo, hi = limits[channel]
+            bands.append(np.clip((values - lo) / max(hi - lo, 1e-6), 0, 1))
+        image = (np.dstack(bands) * 255).astype(np.uint8)
+        buffer = io.BytesIO()
+        Image.fromarray(image).save(buffer, "JPEG", quality=args.quality, optimize=True)
+        jpeg = base64.b64encode(buffer.getvalue()).decode("ascii")
+        total += len(jpeg)
+
+        labels = run.labels(name)
+        outlines, ids = [], []
+        for gid in np.unique(labels):
             if gid <= 0:
                 continue
-            m = L == gid
-            if m.sum() < 25:
+            mask = labels == gid
+            if mask.sum() < args.min_gc_px:
                 continue
-            for c in measure.find_contours(m.astype(np.float32), 0.5):
-                if len(c) < 8:
+            for contour in measure.find_contours(mask.astype(np.float32), 0.5):
+                if len(contour) < 8:
                     continue
-                step = max(1, len(c) // 120)          # <=120 points is plenty at this scale
-                pts = c[::step][:, ::-1]               # (row,col) -> (x,y)
-                outlines.append(dict(gc=int(gid),
-                                     xy=[[round(float(a), 1), round(float(b), 1)] for a, b in pts]))
-            rr, cc = np.nonzero(m)
-        labels = []
-        for gid in np.unique(L):
-            if gid <= 0:
-                continue
-            m = L == gid
-            if m.sum() < 25:
-                continue
-            rr, cc = np.nonzero(m)
-            labels.append(dict(gc=int(gid), x=round(float(cc.mean()), 1), y=round(float(rr.mean()), 1)))
-        payload.append(dict(plane=p, w=int(L.shape[1]), h=int(L.shape[0]),
-                            x0=x0, y0=y0, um=10.0, jpeg=b64,
-                            outlines=outlines, labels=labels))
-        print(f"  {p}: {L.shape[1]}x{L.shape[0]}  jpeg {len(b64)/1e3:.0f} kB b64  "
-              f"{len(outlines)} outline rings, {len(labels)} GC labels")
+                step = max(1, len(contour) // 120)             # 120 points is plenty at this scale
+                xy = contour[::step][:, ::-1]                 # (row, col) -> (x, y)
+                outlines.append(dict(gc=int(gid), xy=[[round(float(a), 1), round(float(b), 1)] for a, b in xy]))
+            rows, cols = np.nonzero(mask)
+            ids.append(dict(gc=int(gid), x=round(float(cols.mean()), 1), y=round(float(rows.mean()), 1)))
+        planes.append(dict(plane=name, w=int(labels.shape[1]), h=int(labels.shape[0]),
+                           x0=run.grid.x0, y0=run.grid.y0, um=run.grid.um, jpeg=jpeg,
+                           outlines=outlines, labels=ids))
+        print(f"  {name}: {labels.shape[1]} x {labels.shape[0]} px, JPEG {len(jpeg) / 1e3:.0f} kB as base64, "
+              f"{len(outlines)} outlines, {len(ids)} GC ids")
 
-    Path(out).write_text(json.dumps(dict(rep=rep, channels="R=CD4 · G=GL7 · B=IgD",
-                                         limits={k: list(v) for k, v in lim.items()},
-                                         planes=payload), separators=(",", ":")),
-                         encoding="utf-8")
-    print(f"  wrote {out}  ({Path(out).stat().st_size/1e6:.2f} MB, images {total/1e6:.2f} MB b64)")
+    channels = " · ".join(f"{band}={channel}" for band, channel in zip("RGB", rgb) if channel)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(dict(run=cfg.name, rgb=rgb, channels=channels,
+                                   limits={k: list(v) for k, v in limits.items()}, planes=planes),
+                              separators=(",", ":")), encoding="utf-8")
+    print(f"wrote {out} ({out.stat().st_size / 1e6:.2f} MB, images {total / 1e6:.2f} MB as base64)")
+    return 0
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--rep", required=True, choices=list(REPS))
-    ap.add_argument("--out", required=True)
-    a = ap.parse_args()
-    main(a.rep, a.out)
+    raise SystemExit(main())

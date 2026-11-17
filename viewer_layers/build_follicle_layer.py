@@ -1,101 +1,112 @@
 #!/usr/bin/env python3
-"""Compute a B-follicle point cloud for all nine planes of one replicate.
+"""Build the B-cell follicle points of every section (05_viewer/follicle_points.npz).
 
-IF planes  -> IgD (AF647), Otsu-thresholded inside the tissue, cleaned.
-             IgD marks the mantle/follicle and is naturally low inside the GC,
-             which is exactly the backdrop effect wanted.
-ST planes  -> RCTD first_type in {B naive, B memory, B MZ}, the rule that gives a
-             follicle rather than a haze (summed doublet-mode weights do not).
+The viewer draws these points faintly behind the germinal centres (GCs). A GC
+can then be judged against the B-cell follicle it sits in: a shift between
+sections is visibly either the GC moving or the registration drifting.
 
-Output: 05_viewer/follicle_points.npz with one <f4 (n,2) world-um array per plane.
+Immunofluorescence (IF) sections: the pixels where the follicle marker
+(--follicle-channel, for example IgD) is above its Otsu threshold inside the
+tissue, after a small closing and removal of specks.
+Spatial-transcriptomics (ST) sections: the bins whose dominant RCTD cell type
+(the `first_type` column) is one of --follicle-types. Requiring the dominant
+type, rather than summing weights, keeps red-pulp bins with a minor B-cell
+share out of the follicle.
+Each section keeps at most --max-points points, drawn at random with a fixed seed.
+
+Output: one float32 array of (x, y) frame positions in micrometres per section,
+keyed by section name, and a report next to it (`follicle_points_report.json`).
+
+Example:
+    python viewer_layers/build_follicle_layer.py --config my_experiment.yaml \\
+        --weights rctd_weights/ --follicle-channel IgD_AF647
 """
 from __future__ import annotations
-import argparse, json
+
+import json
 from pathlib import Path
-import numpy as np, pandas as pd
-from scipy import ndimage as ndi
+
+import numpy as np
 from skimage import filters, morphology
 
-GRID_UM = 10.0
-DNB_UM = 0.5
-MAX_POINTS = 6000          # per plane; a backdrop does not need every pixel
-MIN_BLOB_PX = 25
-
-REPS = {
-    "rep1": dict(root="/path/to/nine_section_output/rep1",
-                 st=["D1", "E3", "G4", "G5"],
-                 chips=["B06289D1", "B06289E3", "B06289G4", "B06289G5"]),
-    "rep2": dict(root="/path/to/nine_section_output/rep2",
-                 st=["A4", "C1", "C4", "C5"],
-                 chips=["B06286A4", "B06286C1", "B06286C4", "B06286C5"]),
-}
-ORDER = ["IF1", None, "IF3", None, "IF5", None, "IF7", None, "IF9"]   # ST slots filled per rep
+import layer_common as common
+from gcalign import masks              # noqa: E402  (layer_common makes gcalign importable)
 
 
-def thin(points, rng, cap=MAX_POINTS):
+def thin(points: np.ndarray, rng: np.random.Generator, cap: int) -> np.ndarray:
+    """At most `cap` points, drawn without replacement."""
     if len(points) <= cap:
         return points
     return points[rng.choice(len(points), cap, replace=False)]
 
 
-def main(rep, weights_dir, out):
-    cfg = REPS[rep]
-    root = Path(cfg["root"])
-    ch = np.load(root / "03_gc_match/if_channels_warped.npz")
-    lab = np.load(root / "03_gc_match/plane_gc_labels.npz")
-    x0, y0, h, w = [float(v) for v in lab["grid"]]
-    rng = np.random.default_rng(20260917)
-    out_arrays, report = {}, []
+def main(argv=None) -> int:
+    ap = common.parser(__doc__.split("\n")[0])
+    common.add_weights(ap)
+    ap.add_argument("--follicle-channel", required=True,
+                    help="IF channel that marks the B-cell follicle, named as in the config (for example IgD_AF647)")
+    ap.add_argument("--follicle-types", default="B naive,B memory,B MZ",
+                    help="comma-separated RCTD first_type values that count as follicular B cells. "
+                         "Default: %(default)s")
+    ap.add_argument("--max-points", type=int, default=6000,
+                    help="largest number of points kept per section. Default: %(default)s")
+    ap.add_argument("--min-blob-px", type=int, default=25,
+                    help="IF sections: smallest follicle patch kept, in grid pixels. Default: %(default)s")
+    ap.add_argument("--min-matched", type=float, default=0.8,
+                    help="ST sections: stop if fewer than this fraction of the follicle bins in the RCTD table "
+                         "are found in the scaffold. Default: %(default)s")
+    ap.add_argument("--seed", type=int, default=20260917, help="random seed for the thinning. Default: %(default)s")
+    ap.add_argument("--out", type=Path, default=None,
+                    help="output file. Default: <run>/05_viewer/follicle_points.npz")
+    args = ap.parse_args(argv)
 
-    planes = list(ORDER)
-    for i, s in enumerate(cfg["st"]):
-        planes[1 + 2 * i] = s
+    run = common.open_run(args)
+    channel = common.require_channel(run, args.follicle_channel, "--follicle-channel")
+    types = [t.strip() for t in args.follicle_types.split(",") if t.strip()]
+    tissue_channels = [c for c in run.cfg.if_images.tissue_channels if c in run.channel_names] or run.channel_names
+    out = args.out or run.root / "05_viewer" / "follicle_points.npz"
+    tables = common.resolve_tables(run, args.weights, args.weights_pattern)
+    rng = np.random.default_rng(args.seed)
+    arrays, report = {}, []
 
-    for section, name in enumerate(planes, start=1):
-        if name.startswith("IF"):
-            igd = ch[f"{name}|IgD_AF647"].astype(np.float32)
-            tissue = sum(ch[f"{name}|{c}"].astype(np.float32)
-                         for c in ("IgD_AF647", "GL7_AF488", "CD4_AF594")) > 0
-            vals = igd[tissue]
-            thr = float(filters.threshold_otsu(vals))
-            mask = (igd > thr) & tissue
-            mask = morphology.binary_closing(mask, morphology.disk(2))
-            mask = morphology.remove_small_objects(mask, MIN_BLOB_PX)
-            gc = lab[name] > 0
-            overlap = float((mask & gc).sum() / max(mask.sum(), 1))
+    for plane in run.planes:                                       # cutting order: fixes the random draws
+        name = plane.name
+        if plane.kind == "IF":
+            marker = run.channel(name, channel).astype(np.float32)
+            tissue = np.zeros(marker.shape, bool)
+            for other in tissue_channels:
+                tissue |= run.channel(name, other) > 0
+            threshold = float(filters.threshold_otsu(marker[tissue]))
+            mask = (marker > threshold) & tissue
+            mask = masks.closing(mask, morphology.disk(2))
+            mask = masks.remove_small(mask, args.min_blob_px)
+            overlap = float((mask & (run.labels(name) > 0)).sum() / max(mask.sum(), 1))
             rows, cols = np.nonzero(mask)
-            pts = np.column_stack([x0 + cols * GRID_UM, y0 + rows * GRID_UM]).astype(np.float32)
-            src, extra = "IgD_AF647", dict(otsu=round(thr, 1), gc_overlap=round(overlap, 4))
+            points = run.grid.to_xy(rows, cols).astype(np.float32)
+            source, extra = channel, dict(otsu=round(threshold, 1), gc_overlap=round(overlap, 4))
         else:
-            chip = cfg["chips"][cfg["st"].index(name)]
-            d = pd.read_csv(Path(weights_dir) / f"{rep}_{chip}_rctd8.csv.gz")
-            d = d[d.first_type.isin(["B naive", "B memory", "B MZ"])]
-            # RCTD x/y are chip units; the scaffold carries the aligned world position
-            sc = np.load(root / "00_scaffold/st_scaffold.npz")
-            m = sc["slice_short"] == name
-            key = pd.DataFrame({"sx": np.rint(sc["chip_um"][m, 0] / DNB_UM).astype(np.int32),
-                                "sy": np.rint(sc["chip_um"][m, 1] / DNB_UM).astype(np.int32),
-                                "wx": sc["world_um"][m, 0], "wy": sc["world_um"][m, 1]})
-            j = d.rename(columns={"x": "sx", "y": "sy"}).merge(key, on=["sx", "sy"], how="inner")
-            pts = np.column_stack([j.wx.values, j.wy.values]).astype(np.float32)
-            src, extra = "RCTD first_type", dict(matched=int(len(j)), candidates=int(len(d)))
-            if len(j) < 0.8 * len(d):
-                raise SystemExit(f"{name}: only {len(j)}/{len(d)} follicle spots matched the scaffold")
-        kept = thin(pts, rng)
-        out_arrays[name] = kept
-        report.append(dict(section=section, plane=name, source=src,
-                           found=int(len(pts)), kept=int(len(kept)), **extra))
-        print(f"  {name:<4} {src:<16} found {len(pts):>7,}  kept {len(kept):>6,}  {extra}")
+            path = tables[name]
+            table = common.rctd_table(path)
+            candidates = table[table.first_type.isin(types)]
+            joined = common.on_bins(run, name, candidates)
+            points = np.column_stack([joined.wx.values, joined.wy.values]).astype(np.float32)
+            source, extra = "RCTD first_type", dict(matched=int(len(joined)), candidates=int(len(candidates)),
+                                                    table=path.name)
+            if len(joined) < args.min_matched * len(candidates):
+                raise SystemExit(f"{name}: only {len(joined)} of {len(candidates)} follicle bins in "
+                                 f"{path.name} were found in the scaffold; the coordinates do not agree")
+        kept = thin(points, rng, args.max_points)
+        arrays[name] = kept
+        report.append(dict(section=plane.index, plane=name, kind=plane.kind, source=source,
+                           found=int(len(points)), kept=int(len(kept)), **extra))
+        print(f"  {name:<10} {plane.kind}  {source:<16} found {len(points):>7,}  kept {len(kept):>6,}")
 
-    np.savez_compressed(out, **out_arrays)
-    Path(str(out).replace(".npz", "_report.json")).write_text(json.dumps(report, indent=1))
-    print(f"  wrote {out}")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(out, **arrays)
+    out.with_name(out.stem + "_report.json").write_text(json.dumps(report, indent=1), encoding="utf-8")
+    print(f"wrote {out}")
+    return 0
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--rep", required=True, choices=list(REPS))
-    ap.add_argument("--weights", required=True)
-    ap.add_argument("--out", required=True)
-    a = ap.parse_args()
-    main(a.rep, a.weights, a.out)
+    raise SystemExit(main())

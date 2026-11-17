@@ -36,6 +36,13 @@ class IFImages:
     # an illumination or staining gradient across it, in which case a global
     # threshold drops the dim side of the section; ~0.6 recovers it.
     tissue_threshold_scale: float = 1.0
+    # Which three channels the figures show as red, green and blue. Leave unset
+    # and the fluorophore in each channel name decides (594 -> red, 488 -> green,
+    # 647 -> blue); a channel can be left out with `null`.
+    display_rgb: list[str | None] | None = None
+    # "czi" (Zeiss mosaic) or "tiff" (a plain or OME multi-channel TIFF);
+    # "auto" goes by the file extension.
+    reader: str = "auto"
 
 
 @dataclass
@@ -84,13 +91,16 @@ class Columns:
 
 @dataclass
 class Viewer:
-    title: str = "Nine-slice GC columns"
+    title: str = "GC columns"
     subtitle: str = ""
     slab_half_um: float = 2.0
     st_hex: str = "#FF1493"        # the GC cluster's colour in your own atlas
     if_hex: str = "#0F52BA"        # sapphire
     default_z_exaggeration: int = 5
     filename: str = "gc_columns.html"
+    # "aurora": even-lightness identity colours tuned for the black theme.
+    # "hsv": the saturated palette of gcalign 0.1 and the four-section atlas.
+    palette: str = "aurora"
 
 
 @dataclass
@@ -123,13 +133,57 @@ class Config:
         return [s.name for s in self.st_sections]
 
     @property
+    def if_names(self) -> list[str]:
+        return [s.name for s in self.if_sections]
+
+    @property
     def planes(self) -> list[tuple[str, str, int]]:
         """(name, kind, section index) in true cutting order."""
         return [(s.name, s.kind, s.index) for s in sorted(self.sections, key=lambda s: s.index)]
 
+    @property
+    def plane_names(self) -> list[str]:
+        return [name for name, _, _ in self.planes]
+
+    @property
+    def n_planes(self) -> int:
+        return len(self.sections)
+
+    def section(self, name: str) -> Section:
+        for item in self.sections:
+            if item.name == name:
+                return item
+        raise KeyError(f"no section named {name!r}; the config lists {self.plane_names}")
+
     def z_um(self, section_index: int) -> float:
         first = min(s.index for s in self.sections)
         return (section_index - first) * self.section_thickness_um
+
+    def z_of(self, name: str) -> float:
+        return self.z_um(self.section(name).index)
+
+    @property
+    def z_span_um(self) -> float:
+        return self.z_um(max(s.index for s in self.sections))
+
+    def if_path(self, section: Section) -> Path:
+        """The image file of one IF section."""
+        return self.if_images.dir / self.if_images.filename_template.format(
+            index=section.index, source=section.source, name=section.name)
+
+    @property
+    def rgb_channels(self) -> list[str | None]:
+        """The channels shown as red, green and blue, in that order."""
+        names = list(self.if_images.channels.values())
+        if self.if_images.display_rgb is not None:
+            chosen = list(self.if_images.display_rgb)
+            if len(chosen) != 3:
+                raise ValueError("if_images.display_rgb takes exactly three entries (red, green, blue)")
+            for item in chosen:
+                if item is not None and item not in names:
+                    raise ValueError(f"display_rgb names {item!r}, which is not one of the channels {names}")
+            return chosen
+        return default_rgb(names)
 
     @property
     def neighbours(self) -> dict[int, list[str]]:
@@ -163,8 +217,59 @@ def _as_path(value: Any) -> Path:
     return Path(str(value)).expanduser()
 
 
-def load(path: str | Path) -> Config:
+# Fluorophores by where they are conventionally displayed. Anything not listed
+# is placed in whichever of red / green / blue is still free, in channel order.
+# Wavelengths match anywhere in a word ("AF594"); dye names must be the word.
+_RGB_HINTS = (
+    (0, ("594", "568", "555", "546"), ("cy3", "tritc", "texasred", "mcherry", "rfp", "pe")),
+    (1, ("488", "514"), ("fitc", "gfp", "cy2")),
+    (2, ("647", "633", "635", "640", "660", "680"), ("cy5", "apc")),
+)
+_NUCLEAR = ("dapi", "hoechst", "draq5", "draq7")
+
+
+def default_rgb(names: list[str]) -> list[str | None]:
+    """Red, green and blue from the channel names; nuclear counterstains stay out."""
+    def words(name: str) -> list[str]:
+        return name.lower().replace("-", "_").replace(" ", "_").split("_")
+
+    out: list[str | None] = [None, None, None]
+    pool = [n for n in names if not any(w in _NUCLEAR for w in words(n))]
+    for name in list(pool):
+        for slot, wavelengths, dyes in _RGB_HINTS:
+            hit = any(tag in word for word in words(name) for tag in wavelengths) \
+                or any(word == tag for word in words(name) for tag in dyes)
+            if hit and out[slot] is None:
+                out[slot] = name
+                pool.remove(name)
+                break
+    for name in pool:
+        if None not in out:
+            break
+        out[out.index(None)] = name
+    return out
+
+
+def _block(klass, raw: dict, where: str):
+    """Build one optional config block, naming the key if one is misspelt."""
+    known = {f.name for f in klass.__dataclass_fields__.values()}
+    unknown = sorted(set(raw) - known)
+    if unknown:
+        raise ValueError(f"unknown key(s) {unknown} under `{where}`; "
+                         f"it understands {sorted(known)}")
+    return klass(**raw)
+
+
+def load(path: str | Path, output_dir: str | Path | None = None) -> Config:
+    """Read an experiment description.
+
+    `output_dir` overrides the one written in the file, which is how a finished
+    run that has been moved or copied is opened without editing its config.
+    """
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    for key in ("name", "output_dir", "sections", "section_thickness_um", "if_images", "st_scaffold"):
+        if key not in raw:
+            raise ValueError(f"{path}: the config has no `{key}`")
     sections = []
     for item in raw["sections"]:
         kind = item["kind"].upper()
@@ -196,6 +301,9 @@ def load(path: str | Path) -> Config:
             min_gc_px=int(images.get("min_gc_px", 30)),
             tissue_threshold_scale=float(images.get("tissue_threshold_scale", 1.0)),
             filename_template=str(images.get("filename_template", "Section{index}_stitched.czi")),
+            display_rgb=(None if images.get("display_rgb") is None
+                         else [None if v is None else str(v) for v in images["display_rgb"]]),
+            reader=str(images.get("reader", "auto")).lower(),
         ),
         st_scaffold=STScaffold(
             h5ad=_as_path(scaffold["h5ad"]),
@@ -208,9 +316,21 @@ def load(path: str | Path) -> Config:
     )
     for block, klass in (("align", Align), ("columns", Columns), ("viewer", Viewer)):
         if block in raw and raw[block]:
-            setattr(cfg, block, klass(**raw[block]))
-    if cfg.if_images.gc_channel not in cfg.if_images.channels.values():
-        raise ValueError(f"gc_channel {cfg.if_images.gc_channel!r} is not one of the channels")
+            setattr(cfg, block, _block(klass, raw[block], block))
+    if output_dir is not None:
+        cfg.output_dir = _as_path(output_dir)
+    channels = list(cfg.if_images.channels.values())
+    if cfg.if_images.gc_channel not in channels:
+        raise ValueError(f"gc_channel {cfg.if_images.gc_channel!r} is not one of the channels {channels}")
+    stray = sorted(set(cfg.if_images.tissue_channels) - set(channels))
+    if stray:
+        raise ValueError(f"tissue_channels names {stray}, which are not among the channels {channels}")
+    if cfg.if_images.reader not in ("auto", "czi", "tiff"):
+        raise ValueError("if_images.reader must be auto, czi or tiff")
+    from . import theme
+    if cfg.viewer.palette not in theme.PALETTES:
+        raise ValueError(f"viewer.palette must be one of {theme.PALETTES}")
+    cfg.rgb_channels                      # validates display_rgb
     return cfg
 
 

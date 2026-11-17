@@ -75,7 +75,7 @@ def run(cfg: Config) -> None:
         print(f"{name}: {keep.sum():,} bins, {(gc > 0).sum():,} GC bins, "
               f"{summary['slices'][name]['n_merged_gc']} merged GCs")
 
-    # merged-GC centroid per slice and the four-slice consensus
+    # centre of every GC on each ST section, and its mean over the ST sections
     rows = []
     for merged in sorted({int(v) for v in np.unique(gc_id) if v > 0}):
         per_slice = {}

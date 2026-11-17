@@ -1,36 +1,48 @@
 #!/bin/bash
-# Render both replicates' films as a SLURM array. Roughly 40 minutes and under
-# 8 GB each on one core; the four threads are for the x264 encoder.
+# Render the reconstruction films of finished gcalign runs: one array task per
+# run, each writing the full film, the short edit, their checks and the README
+# loops. Fill in every CHANGE_ME and /path/to, then:  sbatch run_story.sbatch
 #
-# Edit the account, partition and the GCALIGN_* paths for your installation,
-# then:  sbatch run_story.sbatch
-#SBATCH --job-name=gc_story
+# Cost per run on 16 cores: the full film (86 s at 1080p60) renders in about
+# 5 min and the short edit in about 2 min. SLURM reports a peak of about 23 GB
+# for the full film; the frame workers share their textures, so the real
+# footprint is lower, but the per-process accounting counts them repeatedly.
+#SBATCH --job-name=gcalign_film
 #SBATCH --account=CHANGE_ME
 #SBATCH --partition=CHANGE_ME
-#SBATCH --array=1-2
+#SBATCH --array=0-1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=24G
-#SBATCH --time=04:00:00
-#SBATCH --output=story_%A_%a.log
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=48G
+#SBATCH --time=01:30:00
+#SBATCH --output=film_%A_%a.log
 set -euo pipefail
 
-# Rendering is single-threaded numpy plus PIL; letting BLAS spawn threads only
-# adds contention on a one-core allocation.
-export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
-export MPLCONFIGDIR="${TMPDIR:-/tmp}/gc_story_${SLURM_JOB_ID}"
-
-export GCALIGN_NINE_SLICE_DIR=/path/to/_build/nine_slice
-export GCALIGN_FILM_OUT=/path/to/film_output
-export GCALIGN_SPATEO_REP1=/path/to/rep1_bin20_aligned
-export GCALIGN_SPATEO_REP2=/path/to/rep2_bin20_aligned
-export GCALIGN_GC_FAMILY_CSV=/path/to/new_region_merged_gc_id.csv
-export GCALIGN_GC_REGIONS_DIR=/path/to/02_GC_selection
-export GCALIGN_SLICES_REP1=CHIP_A,CHIP_B,CHIP_C,CHIP_D
-export GCALIGN_SLICES_REP2=CHIP_E,CHIP_F,CHIP_G,CHIP_H
-
+# one entry per array task
+CONFIGS=(/path/to/rep1.yaml /path/to/rep2.yaml)        # finished runs
+LABELS=(rep1 rep2)                                       # tag shown top right
+SPATEO=(/path/to/rep1_spateo_run /path/to/rep2_spateo_run)   # act 1; "" opens on act 2
+OUT=/path/to/films
 PYTHON=${PYTHON:-python3}
-HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# export GCALIGN_FFMPEG=/path/to/ffmpeg                 # otherwise PATH, then imageio-ffmpeg
 
-"$PYTHON" -u "$HERE/film_paths.py"
-"$PYTHON" -u "$HERE/render_story.py" --rep "rep${SLURM_ARRAY_TASK_ID}"
+i=${SLURM_ARRAY_TASK_ID:-0}
+export TMPDIR=/tmp/gcfilm_${SLURM_JOB_ID:-$$}_${i}
+mkdir -p "$TMPDIR"
+trap 'rm -rf "$TMPDIR"' EXIT
+# frames are rendered by forked worker processes; keep BLAS to one thread each
+export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
+export MPLCONFIGDIR=$TMPDIR
+
+cfg=${CONFIGS[$i]}
+name=${LABELS[$i]}
+export GCALIGN_SPATEO_DIR=${SPATEO[$i]}
+mkdir -p "$OUT"
+
+"$PYTHON" -u -m gcalign.film render --config "$cfg" --label "$name" --out "$OUT/$name.mp4"
+"$PYTHON" -u -m gcalign.film render --config "$cfg" --label "$name" --preset short \
+          --out "$OUT/${name}_short.mp4"
+"$PYTHON" -u -m gcalign.film check "$OUT/$name.mp4"
+"$PYTHON" -u -m gcalign.film check "$OUT/${name}_short.mp4"
+"$PYTHON" -u -m gcalign.film loops --short "$OUT/${name}_short.mp4" --names "${name}_film" \
+          --closeup "$OUT/$name.mp4" --out "$OUT/loops_$name"
