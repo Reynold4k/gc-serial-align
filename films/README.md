@@ -5,6 +5,9 @@ video). The film shows how the run placed every section of the tissue block
 in one coordinate frame. Every moving thing in the film is a transform that
 the run stored. The film does not recompute any registration.
 
+The films of our two replicates are attached to the
+[0.2.0 release](https://github.com/Reynold4k/gc-serial-align/releases/tag/v0.2.0).
+
 Abbreviations used in this file and in the film:
 
 - IF: immunofluorescence

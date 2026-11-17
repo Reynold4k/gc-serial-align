@@ -43,9 +43,12 @@ rendered by `gcalign animate` from the files of the finished runs. Each film sho
 this order: the ST sections being registered to each other (by Spateo, before gcalign);
 the ST sections stacked in cutting order; one IF section being matched to its
 neighbouring ST sections; all nine sections in one coordinate system; and one turn of the
-stack, with GCs from IF sections in blue and GCs from ST sections in pink. The full-length
-films (86 seconds each) show the matching of every IF section; `gcalign animate` renders
-them.
+stack, with GCs from IF sections in blue and GCs from ST sections in pink.
+
+The full-length films (86 seconds each) show the matching of every IF section. They are
+attached to the [0.2.0 release](https://github.com/Reynold4k/gc-serial-align/releases/tag/v0.2.0)
+as MP4 files, together with the two 20-second films and a smaller copy of each full-length
+film for slides.
 
 ## Install
 
