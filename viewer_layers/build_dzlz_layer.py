@@ -1,115 +1,133 @@
 #!/usr/bin/env python3
-"""Dark-zone / light-zone point clouds for all nine planes.
+"""Build the dark-zone and light-zone points of every section (05_viewer/dzlz_points.npz).
 
-IF planes  -> inside each registered GC, the area is split on CD4 at that GC's own
-              median: the Tfh-rich half is the light zone, the Tfh-poor half the dark
-              zone. No smoothing and no tuned cut point — a sweep over sigma
-              (0 / 1.2 / 2.5 px) and split (50/50 … 80/20) showed smoothing costs up to
-              15 points of agreement while the split point changes almost nothing, so
-              the least-parameterised choice wins. Validated against the RCTD DZ/LZ axis
-              on the neighbouring Stereo-seq sections: the two agree in sign for 73%
-              (rep1) and 83% (rep2) of GCs, against 50% for a coin.
-ST planes  -> RCTD DZ / LZ, normalised weight >= 0.15, inside the curated GC region.
+A germinal centre (GC) has a dark zone (DZ), where B cells divide, and a light
+zone (LZ), where they meet T follicular helper cells. These points show the two
+zones inside each registered GC; the viewer draws them in its DZ / LZ view and
+filters them by GC when one is selected.
 
-Output: 05_viewer/dzlz_points.npz with "<plane>|DZ" / "<plane>|LZ" world-um arrays
-and a matching "<plane>|<cls>|gc" curated GC id per point.
+Immunofluorescence (IF) sections: inside each GC, the pixels at or above that
+GC's own median of the light-zone marker (--zone-channel, for example CD4, which
+is high where T follicular helper cells gather) are light zone and the rest are
+dark zone. The split is unsmoothed and at the median: smoothing cost up to 15
+points of agreement with the neighbouring ST sections, and the split point
+changed almost nothing.
+Spatial-transcriptomics (ST) sections: bins inside a GC whose normalised RCTD
+weight for the zone (--dz-column, --lz-column) is at least --min-weight.
+The two zones are thresholded independently here, so the point clouds can
+overlap; build_zone_blocks.py makes solids that tile each GC instead.
+
+Output: "<section>|DZ" and "<section>|LZ" float32 arrays of (x, y) frame
+positions in micrometres, each with a matching "<section>|<zone>|gc" array of
+GC ids, and a report next to it (`dzlz_points_report.json`).
+
+Example:
+    python viewer_layers/build_dzlz_layer.py --config my_experiment.yaml \\
+        --weights rctd_weights/ --zone-channel CD4_AF594
 """
 from __future__ import annotations
-import argparse, json
+
+import json
 from pathlib import Path
-import numpy as np, pandas as pd
-from scipy import ndimage as ndi
 
-GRID_UM, DNB_UM, MAX_PER_CLASS, MIN_GC_PX = 10.0, 0.5, 5000, 60
-REPS = {
-    "rep1": dict(root="/path/to/nine_section_output/rep1",
-                 st=["D1","E3","G4","G5"], chips=["B06289D1","B06289E3","B06289G4","B06289G5"]),
-    "rep2": dict(root="/path/to/nine_section_output/rep2",
-                 st=["A4","C1","C4","C5"], chips=["B06286A4","B06286C1","B06286C4","B06286C5"]),
-}
+import numpy as np
+
+import layer_common as common
 
 
-def thin_idx(n, rng, cap=MAX_PER_CLASS):
-    """Indices to keep, so the points and their GC ids are thinned together."""
+def thin_idx(n: int, rng: np.random.Generator, cap: int) -> np.ndarray:
+    """Indices to keep, so points and their GC ids are thinned together."""
     return np.arange(n) if n <= cap else rng.choice(n, cap, replace=False)
 
 
-def main(rep, weights_dir, out):
-    cfg = REPS[rep]; root = Path(cfg["root"])
-    ch  = np.load(root / "03_gc_match/if_channels_warped.npz")
-    lab = np.load(root / "03_gc_match/plane_gc_labels.npz")
-    sc  = np.load(root / "00_scaffold/st_scaffold.npz")
-    x0, y0, H, W = [float(v) for v in lab["grid"]]
-    rng = np.random.default_rng(20260917)
+def main(argv=None) -> int:
+    ap = common.parser(__doc__.split("\n")[0])
+    common.add_weights(ap)
+    ap.add_argument("--zone-channel", required=True,
+                    help="IF channel that is high in the light zone, named as in the config (for example CD4_AF594)")
+    ap.add_argument("--dz-column", default="DZ", help="RCTD weight column of the dark zone. Default: %(default)s")
+    ap.add_argument("--lz-column", default="LZ", help="RCTD weight column of the light zone. Default: %(default)s")
+    ap.add_argument("--min-weight", type=float, default=0.15,
+                    help="ST sections: smallest normalised RCTD weight that counts as the zone. Default: %(default)s")
+    ap.add_argument("--min-gc-px", type=int, default=60,
+                    help="IF sections: smallest GC cross-section split into zones, in grid pixels. Default: %(default)s")
+    ap.add_argument("--max-points", type=int, default=5000,
+                    help="largest number of points kept per zone per section. Default: %(default)s")
+    ap.add_argument("--seed", type=int, default=20260917, help="random seed for the thinning. Default: %(default)s")
+    ap.add_argument("--out", type=Path, default=None,
+                    help="output file. Default: <run>/05_viewer/dzlz_points.npz")
+    args = ap.parse_args(argv)
+
+    run = common.open_run(args)
+    channel = common.require_channel(run, args.zone_channel, "--zone-channel")
+    columns = {"DZ": args.dz_column, "LZ": args.lz_column}
+    out = args.out or run.root / "05_viewer" / "dzlz_points.npz"
+    tables = common.resolve_tables(run, args.weights, args.weights_pattern)
+    rng = np.random.default_rng(args.seed)
     arrays, report = {}, []
 
-    planes = ["IF1", None, "IF3", None, "IF5", None, "IF7", None, "IF9"]
-    for i, s in enumerate(cfg["st"]):
-        planes[1 + 2 * i] = s
-
-    for section, name in enumerate(planes, start=1):
-        if name.startswith("IF"):
-            cd4 = ch[f"{name}|CD4_AF594"].astype(np.float32)   # unsmoothed: see the docstring
-            ids = np.unique(lab[name]); ids = ids[ids > 0]
-            lz_r, lz_c, lz_g, dz_r, dz_c, dz_g, used = [], [], [], [], [], [], 0
+    for plane in run.planes:                                       # cutting order: fixes the random draws
+        name = plane.name
+        if plane.kind == "IF":
+            marker = run.channel(name, channel).astype(np.float32)    # unsmoothed: see the docstring
+            labels = run.labels(name)
+            ids = np.unique(labels)
+            ids = ids[ids > 0]
+            picked = {"LZ": ([], [], []), "DZ": ([], [], [])}
+            used = 0
             for gid in ids:
-                m = lab[name] == gid
-                if m.sum() < MIN_GC_PX:
+                inside = labels == gid
+                if inside.sum() < args.min_gc_px:
                     continue
-                v = cd4[m]
-                if v.max() - v.min() < 1e-6:
+                values = marker[inside]
+                if values.max() - values.min() < 1e-6:
                     continue
-                rr, cc = np.nonzero(m); hi = v >= np.median(v)
-                lz_r.append(rr[hi]); lz_c.append(cc[hi])
-                lz_g.append(np.full(int(hi.sum()), gid, np.int32))
-                dz_r.append(rr[~hi]); dz_c.append(cc[~hi])
-                dz_g.append(np.full(int((~hi).sum()), gid, np.int32)); used += 1
-            for cls, R, C, G in (("LZ", lz_r, lz_c, lz_g), ("DZ", dz_r, dz_c, dz_g)):
-                if not R:
+                rows, cols = np.nonzero(inside)
+                high = values >= np.median(values)
+                for cls, keep in (("LZ", high), ("DZ", ~high)):
+                    picked[cls][0].append(rows[keep])
+                    picked[cls][1].append(cols[keep])
+                    picked[cls][2].append(np.full(int(keep.sum()), gid, np.int32))
+                used += 1
+            for cls in ("LZ", "DZ"):
+                rows, cols, gcs = picked[cls]
+                if not rows:
                     continue
-                r = np.concatenate(R); c = np.concatenate(C); g = np.concatenate(G)
-                pts = np.column_stack([x0 + c * GRID_UM, y0 + r * GRID_UM]).astype(np.float32)
-                k = thin_idx(len(pts), rng)
-                arrays[f"{name}|{cls}"] = pts[k]
-                # the GC each point belongs to, so selecting a GC filters the cloud
+                r, c, g = np.concatenate(rows), np.concatenate(cols), np.concatenate(gcs)
+                points = run.grid.to_xy(r, c).astype(np.float32)
+                k = thin_idx(len(points), rng, args.max_points)
+                arrays[f"{name}|{cls}"] = points[k]
                 arrays[f"{name}|{cls}|gc"] = g[k]
-            report.append(dict(section=section, plane=name, source="IgD/GL7/CD4 IF",
-                               rule="CD4 >= that GC's own median, inside the registered GC",
+            report.append(dict(section=plane.index, plane=name, kind="IF", source=channel,
+                               rule=f"{channel} >= the GC's own median, inside the registered GC",
                                gcs_used=used,
                                LZ=int(len(arrays.get(f"{name}|LZ", []))),
                                DZ=int(len(arrays.get(f"{name}|DZ", [])))))
         else:
-            chip = cfg["chips"][cfg["st"].index(name)]
-            d = pd.read_csv(Path(weights_dir) / f"{rep}_{chip}_rctd8.csv.gz")
-            m = sc["slice_short"] == name
-            key = pd.DataFrame({"x": np.rint(sc["chip_um"][m, 0] / DNB_UM).astype(np.int32),
-                                "y": np.rint(sc["chip_um"][m, 1] / DNB_UM).astype(np.int32),
-                                "wx": sc["world_um"][m, 0], "wy": sc["world_um"][m, 1],
-                                "gc": sc["gc_id"][m]})
-            j = d.merge(key, on=["x", "y"], how="inner")
-            j = j[j.gc > 0]
+            path = tables[name]
+            table = common.rctd_table(path)
+            common.check_columns(table, columns.values(), path)
+            joined = common.on_bins(run, name, table)
+            joined = joined[joined.gc > 0]
             for cls in ("LZ", "DZ"):
-                sel = j[j[cls] >= 0.15]
-                pts = np.column_stack([sel.wx.values, sel.wy.values]).astype(np.float32)
-                k = thin_idx(len(pts), rng)
-                arrays[f"{name}|{cls}"] = pts[k]
-                arrays[f"{name}|{cls}|gc"] = sel.gc.values.astype(np.int32)[k]
-            report.append(dict(section=section, plane=name, source="RCTD",
-                               rule="normalised weight >= 0.15, inside the curated GC region",
+                chosen = joined[joined[columns[cls]] >= args.min_weight]
+                points = np.column_stack([chosen.wx.values, chosen.wy.values]).astype(np.float32)
+                k = thin_idx(len(points), rng, args.max_points)
+                arrays[f"{name}|{cls}"] = points[k]
+                arrays[f"{name}|{cls}|gc"] = chosen.gc.values.astype(np.int32)[k]
+            report.append(dict(section=plane.index, plane=name, kind="ST", source="RCTD", table=path.name,
+                               rule=f"normalised weight >= {args.min_weight}, inside a GC",
                                LZ=int(len(arrays[f"{name}|LZ"])), DZ=int(len(arrays[f"{name}|DZ"]))))
-        r = report[-1]
-        print(f"  {name:<4} {r['source']:<15} LZ {r['LZ']:>5,}  DZ {r['DZ']:>5,}"
-              f"{'  (' + str(r.get('gcs_used')) + ' GCs)' if 'gcs_used' in r else ''}")
+        entry = report[-1]
+        used = f"  ({entry['gcs_used']} GCs)" if "gcs_used" in entry else ""
+        print(f"  {name:<10} {plane.kind}  LZ {entry['LZ']:>5,}  DZ {entry['DZ']:>5,}{used}")
 
+    out.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(out, **arrays)
-    Path(str(out).replace(".npz", "_report.json")).write_text(json.dumps(report, indent=1))
-    print(f"  wrote {out}")
+    out.with_name(out.stem + "_report.json").write_text(json.dumps(report, indent=1), encoding="utf-8")
+    print(f"wrote {out}")
+    return 0
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--rep", required=True, choices=list(REPS))
-    ap.add_argument("--weights", required=True)
-    ap.add_argument("--out", required=True)
-    a = ap.parse_args()
-    main(a.rep, a.weights, a.out)
+    raise SystemExit(main())

@@ -2,4 +2,9 @@ __pycache__/
 *.pyc
 out/
 *.egg-info/
+build/
+dist/
 .ipynb_checkpoints/
+.pytest_cache/
+# local working copies kept beside a file while it is being reworked
+*.bak_*

@@ -18,7 +18,7 @@ sections:
   - {index: 9, kind: IF, source: 9}
 
 if_images:
-  dir: /data/projects/punim1236/Stereoseqv1.3_IF_images/260818_Stereoseqv1.3_SP_exp2
+  dir: /path/to/if_images/rep2
   filename_template: "Section{index}_stitched.czi"
   um_per_px: 0.8286425781249999
   channels:
@@ -55,7 +55,7 @@ columns:
 viewer:
   title: Nine-slice GC columns
   subtitle: "rep2 · 9 × 10 µm"
-  st_hex: "#FF4500"              # leiden_merged cluster 6 = GC in rep2's clustering
+  st_hex: "#FF1493"              # the same pink as replicate 1; set your own atlas colour here if you need one
   if_hex: "#0F52BA"
   default_z_exaggeration: 5
   filename: nine_slice_gc_columns_rep2.html
